@@ -1,0 +1,63 @@
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath "com.android.tools.build:gradle:9.0.1"
+    }
+}
+
+repositories {
+    google()
+    mavenCentral()
+}
+
+apply plugin: 'com.android.application'
+
+android {
+  compileSdk 33
+  ndkVersion '27.2.12479018'
+  namespace "net.watasuke.handover"
+
+  defaultConfig {
+    applicationId "net.watasuke.handover"
+    minSdk 29
+    targetSdk 33
+    versionCode 1
+    versionName "1.0.0"
+
+    externalNativeBuild {
+      ndk {
+        abiFilters 'arm64-v8a'
+      }
+      ndkBuild {
+        abiFilters 'arm64-v8a'
+      }
+      cmake {
+        targets "handover"
+      }
+    }
+  }
+
+  sourceSets {
+    main {
+      manifest.srcFile 'app/AndroidManifest.xml'
+      res.srcDirs = ['app/res']
+    }
+  }
+
+  externalNativeBuild {
+    cmake {
+      path file('app/CMakeLists.txt')
+    }
+  }
+
+  buildFeatures {
+    prefab true
+  }
+}
+
+dependencies {
+  implementation 'org.khronos.openxr:openxr_loader_for_android:1.1.53'
+}
