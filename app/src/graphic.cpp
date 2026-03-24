@@ -37,6 +37,21 @@ void Graphic::init_instance(std::unique_ptr<OpenXrApp>& openxr_app) {
     extensions.push_back(it->extensionName);
   }
 
+  std::vector<const char*> layers;
+  const auto               available_layers =
+    this->context_.enumerateInstanceLayerProperties();
+  {
+    auto it = std::find_if(available_layers.begin(), available_layers.end(),
+      [](const vk::LayerProperties& e) {
+        return strcmp(e.layerName, "VK_LAYER_KHRONOS_validation") == 0;
+      });
+    if (it == available_layers.end()) {
+      LOG_WARN("Validation layer is not available");
+    } else {
+      layers.push_back(it->layerName);
+    }
+  }
+
   constexpr vk::ApplicationInfo kAppInfo{
     .pApplicationName   = "Handover",
     .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
@@ -46,8 +61,8 @@ void Graphic::init_instance(std::unique_ptr<OpenXrApp>& openxr_app) {
   };
   vk::InstanceCreateInfo ici{
     .pApplicationInfo        = &kAppInfo,
-    .enabledLayerCount       = 0,
-    .ppEnabledLayerNames     = nullptr,
+    .enabledLayerCount       = static_cast<uint32_t>(layers.size()),
+    .ppEnabledLayerNames     = layers.data(),
     .enabledExtensionCount   = static_cast<uint32_t>(extensions.size()),
     .ppEnabledExtensionNames = extensions.data(),
   };
