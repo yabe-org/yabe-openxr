@@ -1,5 +1,6 @@
 #include "openxr.hpp"
 
+#include <android/asset_manager.h>
 #include <android/log.h>
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
@@ -44,7 +45,10 @@ OpenXrApp::OpenXrApp(android_app* app) {
 
 void OpenXrApp::init_later(std::unique_ptr<Graphic>& graphic) {
   this->init_session(graphic);
+  this->init_formats();
+  graphic->init_pipeline(this->color_format_, this->depth_format_);
   this->init_views(graphic);
+  this->init_buffers(graphic);
 }
 
 OpenXrApp::~OpenXrApp() {
@@ -257,21 +261,17 @@ void OpenXrApp::render_layer(
         },
     };
 
-    graphic->rendering_scope(
-      color_swapchain_info.image_views[color_image_index], width, height,
-      [&]() {
-        graphic->clear_depth(
-          depth_swapchain_info.image_views[depth_image_index], 1.0F);
-        if (i % 2) {
-          graphic->clear_color(
-            color_swapchain_info.image_views[color_image_index], 0.6F, 0.0F,
-            0.0F, 1.0F);
-        } else {
-          graphic->clear_color(
-            color_swapchain_info.image_views[color_image_index], 0.0F, 0.6F,
-            0.0F, 1.0F);
-        }
-      });
+    graphic->rendering_scope([&](vk::raii::CommandBuffer& cmd) {
+      graphic->set_render_attachments(cmd,
+        color_swapchain_info.image_views[color_image_index],
+        depth_swapchain_info.image_views[depth_image_index], width, height,
+        0.9F, 0.4F, 0.4F, 1.0F, 1.0F);
+      graphic->set_viewport(cmd, 0.0F, 0.0F, static_cast<float>(width),
+        static_cast<float>(height), 0.0F, 1.0F);
+      graphic->set_scissor(cmd, 0, 0, width, height);
+      graphic->set_buffers(cmd, *this->vertex_buffer_, *this->index_buffer_);
+      graphic->draw_indexed(cmd, 6);
+    });
 
     XrSwapchainImageReleaseInfo sri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     ENSURE(xrReleaseSwapchainImage(color_swapchain_info.swapchain, &sri));
@@ -344,7 +344,7 @@ void OpenXrApp::init_instance(android_app* app) {
     .applicationInfo       = ai,
     .enabledApiLayerCount  = 0,
     .enabledApiLayerNames  = nullptr,
-    .enabledExtensionCount = 1,
+    .enabledExtensionCount = static_cast<uint32_t>(extensions.size()),
     .enabledExtensionNames = extensions.data(),
   };
   ENSURE(xrCreateInstance(&ici, &this->instance_));
@@ -368,6 +368,7 @@ void OpenXrApp::init_session(std::unique_ptr<Graphic>& graphic) {
   XrGraphicsRequirementsVulkanKHR graphics_requirements{
     XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR};
   // this must be called, ignore the result for now
+  ENSURE(xr_get_vulkan_graphics_requirements(
     this->instance_, this->system_id_, &graphics_requirements));
 
   const auto          graphics_binding = graphic->get_graphics_binding();
@@ -378,6 +379,39 @@ void OpenXrApp::init_session(std::unique_ptr<Graphic>& graphic) {
     .systemId    = this->system_id_,
   };
   ENSURE(xrCreateSession(this->instance_, &sci, &this->session_));
+}
+
+void OpenXrApp::init_formats() {
+  uint32_t swapchain_fmt_count = 0;
+  ENSURE(xrEnumerateSwapchainFormats(
+    this->session_, 0, &swapchain_fmt_count, nullptr));
+  std::vector<int64_t> swapchain_fmts(swapchain_fmt_count);
+  ENSURE(xrEnumerateSwapchainFormats(this->session_, swapchain_fmt_count,
+    &swapchain_fmt_count, swapchain_fmts.data()));
+  // select color format
+  const std::array<uint64_t, 4> expected_color_formats = {
+    static_cast<uint64_t>(vk::Format::eB8G8R8A8Srgb),
+    static_cast<uint64_t>(vk::Format::eR8G8B8A8Srgb),
+    static_cast<uint64_t>(vk::Format::eB8G8R8A8Unorm),
+    static_cast<uint64_t>(vk::Format::eR8G8B8A8Unorm),
+  };
+  auto it = std::find_first_of(swapchain_fmts.begin(), swapchain_fmts.end(),
+    expected_color_formats.begin(), expected_color_formats.end());
+  if (it == swapchain_fmts.end()) {
+    throw std::runtime_error("expected color formats are not supported");
+  }
+  this->color_format_                                  = *it;
+  // select depth format
+  const std::array<uint64_t, 2> expected_depth_formats = {
+    static_cast<uint64_t>(vk::Format::eD32Sfloat),
+    static_cast<uint64_t>(vk::Format::eD16Unorm),
+  };
+  it = std::find_first_of(swapchain_fmts.begin(), swapchain_fmts.end(),
+    expected_depth_formats.begin(), expected_depth_formats.end());
+  if (it == swapchain_fmts.end()) {
+    throw std::runtime_error("expected depth formats are not supported");
+  }
+  this->depth_format_ = *it;
 }
 
 void OpenXrApp::init_views(std::unique_ptr<Graphic>& graphic) {
@@ -409,37 +443,6 @@ void OpenXrApp::init_views(std::unique_ptr<Graphic>& graphic) {
     this->view_config_type_, config_views_count, &config_views_count,
     this->view_config_views_.data()));
 
-  uint32_t swapchain_fmt_count = 0;
-  ENSURE(xrEnumerateSwapchainFormats(
-    this->session_, 0, &swapchain_fmt_count, nullptr));
-  std::vector<int64_t> swapchain_fmts(swapchain_fmt_count);
-  ENSURE(xrEnumerateSwapchainFormats(this->session_, swapchain_fmt_count,
-    &swapchain_fmt_count, swapchain_fmts.data()));
-  // select color format
-  const std::array<uint64_t, 4> expected_color_formats = {
-    static_cast<uint64_t>(vk::Format::eB8G8R8A8Srgb),
-    static_cast<uint64_t>(vk::Format::eR8G8B8A8Srgb),
-    static_cast<uint64_t>(vk::Format::eB8G8R8A8Unorm),
-    static_cast<uint64_t>(vk::Format::eR8G8B8A8Unorm),
-  };
-  auto it = std::find_first_of(swapchain_fmts.begin(), swapchain_fmts.end(),
-    expected_color_formats.begin(), expected_color_formats.end());
-  if (it == swapchain_fmts.end()) {
-    throw std::runtime_error("expected color formats are not supported");
-  }
-  auto                          color_format           = *it;
-  // select depth format
-  const std::array<uint64_t, 2> expected_depth_formats = {
-    static_cast<uint64_t>(vk::Format::eD32Sfloat),
-    static_cast<uint64_t>(vk::Format::eD16Unorm),
-  };
-  it = std::find_first_of(swapchain_fmts.begin(), swapchain_fmts.end(),
-    expected_depth_formats.begin(), expected_depth_formats.end());
-  if (it == swapchain_fmts.end()) {
-    throw std::runtime_error("expected depth formats are not supported");
-  }
-  auto depth_format = *it;
-
   this->color_swapchains_.resize(config_views_count);
   this->depth_swapchains_.resize(config_views_count);
   for (uint32_t i = 0; i < config_views_count; i++) {
@@ -451,7 +454,7 @@ void OpenXrApp::init_views(std::unique_ptr<Graphic>& graphic) {
       .createFlags = 0,
       .usageFlags  = XR_SWAPCHAIN_USAGE_SAMPLED_BIT |
                     XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT,
-      .format      = color_format,
+      .format      = this->color_format_,
       .sampleCount = config_view.recommendedSwapchainSampleCount,
       .width       = config_view.recommendedImageRectWidth,
       .height      = config_view.recommendedImageRectHeight,
@@ -466,7 +469,7 @@ void OpenXrApp::init_views(std::unique_ptr<Graphic>& graphic) {
 
     sci.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT |
                      XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-    sci.format                 = depth_format;
+    sci.format                 = this->depth_format_;
     auto& depth_swapchain_info = this->depth_swapchains_[i];
     ENSURE(
       xrCreateSwapchain(this->session_, &sci, &depth_swapchain_info.swapchain));
@@ -497,12 +500,12 @@ void OpenXrApp::init_views(std::unique_ptr<Graphic>& graphic) {
     for (uint32_t j = 0; j < color_swapchain_image_count; j++) {
       color_swapchain_info.image_views.emplace_back(
         graphic->create_swapchain_image_views(color_swapchain_info.swapchain, j,
-          Graphic::SwapchainType::COLOR, color_format));
+          Graphic::SwapchainType::COLOR, this->color_format_));
     }
     for (uint32_t j = 0; j < depth_swapchain_image_count; j++) {
       depth_swapchain_info.image_views.emplace_back(
         graphic->create_swapchain_image_views(depth_swapchain_info.swapchain, j,
-          Graphic::SwapchainType::DEPTH, depth_format));
+          Graphic::SwapchainType::DEPTH, this->depth_format_));
     }
   }
 
@@ -517,5 +520,27 @@ void OpenXrApp::init_views(std::unique_ptr<Graphic>& graphic) {
       },
   };
   ENSURE(xrCreateReferenceSpace(this->session_, &rsci, &this->local_space_));
+}
+
+void OpenXrApp::init_buffers(std::unique_ptr<Graphic>& graphic) {
+  // vertex buffer
+  std::array<float, 3 * 4> vertices = {
+    +0.5F, +0.5F, 0.0F,  // right, bottom
+    +0.5F, -0.5F, 0.0F,  // right, top
+    -0.5F, -0.5F, 0.0F,  // left,  top
+    -0.5F, +0.5F, 0.0F   // left,  bottom
+  };
+  this->vertex_buffer_ =
+    std::make_unique<Graphic::Buffer>(graphic->create_buffer(vertices.data(),
+      sizeof(vertices), vk::BufferUsageFlagBits::eVertexBuffer));
+
+  // index buffer
+  std::array<uint16_t, 6> indices = {
+    0, 1, 2,  //
+    2, 3, 0   //
+  };
+  this->index_buffer_ =
+    std::make_unique<Graphic::Buffer>(graphic->create_buffer(
+      indices.data(), sizeof(indices), vk::BufferUsageFlagBits::eIndexBuffer));
 }
 }  // namespace handover

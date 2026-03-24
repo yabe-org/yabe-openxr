@@ -7,9 +7,9 @@
 #include <vector>
 #include <vulkan/vulkan_raii.hpp>
 
-namespace handover {
-class Graphic;
+#include "graphic.hpp"
 
+namespace handover {
 class OpenXrApp {
  public:
   explicit OpenXrApp(android_app* app);
@@ -29,7 +29,9 @@ class OpenXrApp {
  private:
   void init_instance(android_app* app);
   void init_session(std::unique_ptr<Graphic>& graphic);
+  void init_formats();
   void init_views(std::unique_ptr<Graphic>& graphic);
+  void init_buffers(std::unique_ptr<Graphic>& graphic);
 
   void handle_session_state_changed(
     const XrEventDataSessionStateChanged& event);
@@ -52,6 +54,9 @@ class OpenXrApp {
   XrSystemId system_id_;
   XrSession  session_;
 
+  uint32_t color_format_ = 0;
+  uint32_t depth_format_ = 0;
+
   std::vector<XrViewConfigurationView> view_config_views_;
   XrViewConfigurationType              view_config_type_ =
     XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
@@ -64,5 +69,8 @@ class OpenXrApp {
   std::vector<SwapchainInfo> depth_swapchains_;
 
   XrSpace local_space_;
+
+  std::unique_ptr<Graphic::Buffer> vertex_buffer_ = nullptr;
+  std::unique_ptr<Graphic::Buffer> index_buffer_  = nullptr;
 };
 }  // namespace handover

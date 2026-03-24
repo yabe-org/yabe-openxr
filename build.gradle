@@ -34,6 +34,9 @@ android {
       ndkBuild {
         abiFilters 'arm64-v8a'
       }
+      cmake {
+        arguments "-DASSETS_DIR=$buildDir/assets"
+      }
     }
   }
 
@@ -41,6 +44,7 @@ android {
     main {
       manifest.srcFile 'app/AndroidManifest.xml'
       res.srcDirs = ['app/res']
+      assets.srcDirs = ["$buildDir/assets"]
     }
   }
 

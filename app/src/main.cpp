@@ -29,7 +29,8 @@ void android_main(android_app* app) {
   std::unique_ptr<handover::Graphic>   graphic    = nullptr;
   try {
     openxr_app = std::make_unique<handover::OpenXrApp>(app);
-    graphic    = std::make_unique<handover::Graphic>(openxr_app);
+    graphic    = std::make_unique<handover::Graphic>(
+      openxr_app, app->activity->assetManager);
     openxr_app->init_later(graphic);
     LOG_INFO("Initialization completed");
 

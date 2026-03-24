@@ -13,6 +13,12 @@ FetchContent_Declare(
   GIT_TAG v1.4.345
 )
 FetchContent_MakeAvailable(VulkanHeaders)
+FetchContent_Declare(
+	glm
+	GIT_REPOSITORY	https://github.com/g-truc/glm.git
+	GIT_TAG 	      1.0.3
+)
+FetchContent_MakeAvailable(glm)
 
 include(AndroidNdkModules)
 android_ndk_import_module_native_app_glue()
@@ -40,6 +46,7 @@ target_include_directories(${PROJECT_NAME}
 target_link_libraries(${PROJECT_NAME} PRIVATE
   OpenXR::openxr_loader
   Vulkan::Headers
+  glm::glm
   android
   native_app_glue
   log
@@ -50,4 +57,59 @@ set_property(
   APPEND_STRING
   PROPERTY LINK_FLAGS " -u ANativeActivity_onCreate"
 )
+
+find_program(GLSLC glslc REQUIRED)
+find_program(SPIRV_LINK spirv-link REQUIRED)
+function(compile_hlsl SHADER_SRC)
+  get_filename_component(FILE_NAME ${SHADER_SRC} NAME_WE)
+  # `ASSETS_DIR` is given by `build.gradle`
+  set(SHADER "${ASSETS_DIR}/shaders/${FILE_NAME}.spv")
+  set(VERT_SHADER "${CMAKE_CURRENT_BINARY_DIR}/shaders/${FILE_NAME}_v.spv")
+  set(FRAG_SHADER "${CMAKE_CURRENT_BINARY_DIR}/shaders/${FILE_NAME}_f.spv")
+  add_custom_command(
+    OUTPUT "${VERT_SHADER}"
+    COMMAND
+      "${GLSLC}"
+      "-o"
+      "${VERT_SHADER}"
+      "-fshader-stage=vert"
+      "-fentry-point=vert_main"
+      "--target-env=vulkan1.0"
+      $<IF:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>,-g,>
+      "${SHADER_SRC}"
+    DEPENDS "${SHADER_SRC}"
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT "${FRAG_SHADER}"
+    COMMAND
+      "${GLSLC}"
+      "-o"
+      "${FRAG_SHADER}"
+      "-fshader-stage=frag"
+      "-fentry-point=frag_main"
+      "--target-env=vulkan1.0"
+      $<IF:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>,-g,>
+      "${SHADER_SRC}"
+    DEPENDS "${SHADER_SRC}"
+    VERBATIM
+  )
+  add_custom_command(
+    OUTPUT "${SHADER}"
+    COMMAND
+      "${SPIRV_LINK}"
+      "-o"
+      "${SHADER}"
+      "${VERT_SHADER}"
+      "${FRAG_SHADER}"
+    DEPENDS "${SHADER_SRC}" "${VERT_SHADER}" "${FRAG_SHADER}"
+    VERBATIM
+  )
+  set_source_files_properties("${SHADER}" GENERATED)
+  target_sources(${PROJECT_NAME} PRIVATE "${SHADER}")
+endfunction()
+file(GLOB_RECURSE shaders shaders/*.hlsl)
+foreach(SHADER_SRC ${shaders})
+  compile_hlsl(${SHADER_SRC})
+endforeach()
 
