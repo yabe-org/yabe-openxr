@@ -27,7 +27,7 @@ target_compile_options(${PROJECT_NAME} PRIVATE
 )
 
 target_compile_definitions(${PROJECT_NAME} PRIVATE
-  XR_USE_GRAPHICS_API_VULKAN
+  XR_USE_GRAPHICS_API_OPENGL_ES
   XR_USE_PLATFORM_ANDROID
 )
 
@@ -39,6 +39,7 @@ target_include_directories(${PROJECT_NAME}
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
   OpenXR::openxr_loader
+  EGL
   GLESv3
   glm::glm
   android

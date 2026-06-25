@@ -4,14 +4,21 @@
 #include <android_native_app_glue.h>
 // this is a comment to disable reorder include by clang-format
 
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <GLES3/gl3.h>
+#include <GLES3/gl3ext.h>
+
 #include <android/asset_manager.h>
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 
+#include <functional>
 #include <map>
+#include <memory>
 #include <vector>
 
-namespace handover {
+namespace yabe_quest {
 class OpenXrApp;
 
 class Graphic {
@@ -19,88 +26,57 @@ class Graphic {
   Graphic(std::unique_ptr<OpenXrApp>& openxr_app, AAssetManager* asset_manager);
   ~Graphic();
 
-  // pipeline creation depends on OpenXR swapchain formats,
-  // which can be obtain only after OpenXR session is created
-  // (xrEnumerateSwapchainFormats() requires the session as an argument)
   void init_pipeline(uint32_t color_format, uint32_t depth_format);
 
-  [[nodiscard]] XrGraphicsBindingOpenGLESAndroidKHR get_graphics_binding()
-    const;
+  [[nodiscard]] XrGraphicsBindingOpenGLESAndroidKHR get_graphics_binding() const;
 
   enum class SwapchainType : uint8_t {
     COLOR,
     DEPTH,
   };
+
   XrSwapchainImageBaseHeader* acquire_swapchain_image(
     XrSwapchain swapchain, SwapchainType type, uint32_t count);
-  vk::raii::ImageView create_swapchain_image_views(
-    XrSwapchain swapchain, uint32_t index, SwapchainType type, uint32_t format);
+  uint32_t get_swapchain_image(XrSwapchain swapchain, uint32_t index, SwapchainType type);
 
   class Buffer {
    public:
-    Buffer(vk::raii::Buffer&& buffer, vk::raii::DeviceMemory&& memory)
-        : buffer_(std::move(buffer)), memory_(std::move(memory)) {
-    }
-    [[nodiscard]]
-    vk::Buffer buffer() const {
-      return this->buffer_;
-    }
+    Buffer(uint32_t buffer) : buffer_(buffer) {}
+    ~Buffer() {}
+    [[nodiscard]] uint32_t buffer() const { return this->buffer_; }
 
    private:
-    vk::raii::Buffer       buffer_;
-    vk::raii::DeviceMemory memory_;
+    uint32_t buffer_;
   };
-  Graphic::Buffer create_buffer(
-    const void* data, vk::DeviceSize size, vk::BufferUsageFlags usage);
 
-  void rendering_scope(
-    const std::function<void(vk::raii::CommandBuffer&)>& func);
-  void set_render_attachments(vk::raii::CommandBuffer& cmd,
-    vk::raii::ImageView& color_view, vk::raii::ImageView& depth_view,
+  Graphic::Buffer create_buffer(const void* data, size_t size, uint32_t target);
+
+  void rendering_scope(const std::function<void()>& func);
+  void set_render_attachments(uint32_t color_texture, uint32_t depth_texture,
     uint32_t width, uint32_t height, float clear_r, float clear_g,
     float clear_b, float clear_a, float clear_depth);
-  void set_viewport(vk::raii::CommandBuffer& cmd, float x, float y, float width,
-    float height, float min_depth, float max_depth);
-  void set_scissor(vk::raii::CommandBuffer& cmd, float offset_x, float offset_y,
-    uint32_t width, uint32_t height);
-  void set_buffers(vk::raii::CommandBuffer& cmd,
-    const Graphic::Buffer& vertex_buffer, const Graphic::Buffer& index_buffer);
-  void draw_indexed(vk::raii::CommandBuffer& cmd, uint32_t index_count);
+  void set_viewport(float x, float y, float width, float height, float min_depth, float max_depth);
+  void set_scissor(int32_t offset_x, int32_t offset_y, uint32_t width, uint32_t height);
+  void set_buffers(const Graphic::Buffer& vertex_buffer, const Graphic::Buffer& index_buffer);
+  void draw_indexed(uint32_t index_count);
 
  private:
-  void init_instance(std::unique_ptr<OpenXrApp>& openxr_app);
-  void init_device(std::unique_ptr<OpenXrApp>& openxr_app);
+  void init_egl();
   void init_shader(AAssetManager* asset_manager);
 
-  uint32_t queue_family_index_ = UINT32_MAX;
-  uint32_t queue_index_        = UINT32_MAX;
+  EGLDisplay egl_display_ = EGL_NO_DISPLAY;
+  EGLContext egl_context_ = EGL_NO_CONTEXT;
+  EGLSurface egl_surface_ = EGL_NO_SURFACE;
+  EGLConfig  egl_config_  = nullptr;
 
   struct SwapchainInfo {
-    SwapchainType                          type;
-    std::vector<XrSwapchainImageVulkanKHR> images;
-    std::vector<vk::raii::ImageView>       image_views;
+    SwapchainType type;
+    std::vector<XrSwapchainImageOpenGLESKHR> images;
   };
   std::map<XrSwapchain, SwapchainInfo> swapchains_;
 
-  // avoid using vk::raii::ImageView as key to suppress compile error
-  // caused at .emplace()
-  std::map<VkImageView, vk::ImageViewCreateInfo> image_views_;
-
-  vk::raii::Context        context_;
-  vk::raii::Instance       instance_        = nullptr;
-  vk::raii::PhysicalDevice physical_device_ = nullptr;
-  vk::raii::Device         device_          = nullptr;
-  vk::raii::Queue          device_queue_    = nullptr;
-  vk::raii::CommandPool    command_pool_    = nullptr;
-  vk::raii::CommandBuffers command_buffers_ = nullptr;
-  vk::raii::Fence          fence_           = nullptr;
-
-  bool                          is_render_pass_started_ = false;
-  vk::raii::ShaderModule        shader_module_          = nullptr;
-  vk::raii::DescriptorSetLayout descriptor_set_layout_  = nullptr;
-  vk::raii::PipelineLayout      pipeline_layout_        = nullptr;
-  vk::raii::Pipeline            pipeline_               = nullptr;
-  vk::raii::RenderPass          render_pass_            = nullptr;
-  vk::raii::Framebuffer         frame_buffer_           = nullptr;
+  uint32_t shader_program_ = 0;
+  uint32_t vao_ = 0;
+  uint32_t frame_buffer_ = 0;
 };
-}  // namespace handover
+}  // namespace yabe_quest

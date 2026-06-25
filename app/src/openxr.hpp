@@ -3,9 +3,9 @@
 #include <android_native_app_glue.h>
 #include <openxr/openxr.h>
 
+#include <memory>
 #include <string>
 #include <vector>
-#include <vulkan/vulkan_raii.hpp>
 
 #include "graphic.hpp"
 
@@ -58,11 +58,14 @@ class OpenXrApp {
   struct SwapchainInfo {
     XrSwapchain                      swapchain        = XR_NULL_HANDLE;
     int64_t                          swapchain_format = 0;
-    std::vector<vk::raii::ImageView> image_views;
+    std::vector<uint32_t>            image_views;
   };
   std::vector<SwapchainInfo> color_swapchains_;
   std::vector<SwapchainInfo> depth_swapchains_;
 
   XrSpace local_space_;
+
+  std::unique_ptr<Graphic::Buffer> vertex_buffer_;
+  std::unique_ptr<Graphic::Buffer> index_buffer_;
 };
 }  // namespace yabe_quest

@@ -1,17 +1,16 @@
 #include "openxr.hpp"
 
+#include <GLES3/gl3.h>
 #include <android/asset_manager.h>
 #include <android/log.h>
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
-#include <vulkan/vulkan_core.h>
 
 #include <array>
 #include <cstring>
 #include <format>
 #include <sstream>
 #include <stdexcept>
-#include <vulkan/vulkan_raii.hpp>
 
 #include "graphic.hpp"
 #include "log.hpp"
@@ -206,16 +205,16 @@ void OpenXrApp::render_layer(
         },
     };
 
-    graphic->rendering_scope([&](vk::raii::CommandBuffer& cmd) {
-      graphic->set_render_attachments(cmd,
+    graphic->rendering_scope([&]() {
+      graphic->set_render_attachments(
         color_swapchain_info.image_views[color_image_index],
         depth_swapchain_info.image_views[depth_image_index], width, height,
         0.9F, 0.4F, 0.4F, 1.0F, 1.0F);
-      graphic->set_viewport(cmd, 0.0F, 0.0F, static_cast<float>(width),
+      graphic->set_viewport(0.0F, 0.0F, static_cast<float>(width),
         static_cast<float>(height), 0.0F, 1.0F);
-      graphic->set_scissor(cmd, 0, 0, width, height);
-      graphic->set_buffers(cmd, *this->vertex_buffer_, *this->index_buffer_);
-      graphic->draw_indexed(cmd, 6);
+      graphic->set_scissor(0, 0, width, height);
+      graphic->set_buffers(*this->vertex_buffer_, *this->index_buffer_);
+      graphic->draw_indexed(6);
     });
 
     XrSwapchainImageReleaseInfo sri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
@@ -248,14 +247,15 @@ void OpenXrApp::init_instance(android_app* app) {
   XrApplicationInfo ai{
     .applicationName    = "",
     .applicationVersion = 1,
-    .engineName         = "HandOver",
+    .engineName         = "YabeForQuest",
     .engineVersion      = 1,
     .apiVersion         = XR_CURRENT_API_VERSION,
   };
-  std::strncpy(ai.applicationName, "HandOver", XR_MAX_APPLICATION_NAME_SIZE);
+  std::strncpy(
+    ai.applicationName, "YabeForQuest", XR_MAX_APPLICATION_NAME_SIZE);
 
   const std::vector<const char*> required_extensions = {
-    XR_KHR_VULKAN_ENABLE_EXTENSION_NAME,
+    XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
     XR_EXT_DEBUG_UTILS_EXTENSION_NAME,
   };
 
@@ -305,6 +305,15 @@ void OpenXrApp::init_instance(android_app* app) {
 }
 
 void OpenXrApp::init_session(std::unique_ptr<Graphic>& graphic) {
+  XrGraphicsRequirementsOpenGLESKHR reqs{
+    .type = XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_ES_KHR,
+    .next = nullptr,
+  };
+  PFN_xrGetOpenGLESGraphicsRequirementsKHR pfnGetOpenGLESGraphicsRequirementsKHR = nullptr;
+  ENSURE(xrGetInstanceProcAddr(this->instance_, "xrGetOpenGLESGraphicsRequirementsKHR",
+    reinterpret_cast<PFN_xrVoidFunction*>(&pfnGetOpenGLESGraphicsRequirementsKHR)));
+  ENSURE(pfnGetOpenGLESGraphicsRequirementsKHR(this->instance_, this->system_id_, &reqs));
+
   const auto          graphics_binding = graphic->get_graphics_binding();
   XrSessionCreateInfo sci{
     .type        = XR_TYPE_SESSION_CREATE_INFO,
@@ -323,11 +332,9 @@ void OpenXrApp::init_formats() {
   ENSURE(xrEnumerateSwapchainFormats(this->session_, swapchain_fmt_count,
     &swapchain_fmt_count, swapchain_fmts.data()));
   // select color format
-  const std::array<uint64_t, 4> expected_color_formats = {
-    static_cast<uint64_t>(vk::Format::eB8G8R8A8Srgb),
-    static_cast<uint64_t>(vk::Format::eR8G8B8A8Srgb),
-    static_cast<uint64_t>(vk::Format::eB8G8R8A8Unorm),
-    static_cast<uint64_t>(vk::Format::eR8G8B8A8Unorm),
+  const std::array<uint64_t, 2> expected_color_formats = {
+    GL_SRGB8_ALPHA8,
+    GL_RGBA8,
   };
   auto it = std::find_first_of(swapchain_fmts.begin(), swapchain_fmts.end(),
     expected_color_formats.begin(), expected_color_formats.end());
@@ -337,8 +344,8 @@ void OpenXrApp::init_formats() {
   this->color_format_                                  = *it;
   // select depth format
   const std::array<uint64_t, 2> expected_depth_formats = {
-    static_cast<uint64_t>(vk::Format::eD32Sfloat),
-    static_cast<uint64_t>(vk::Format::eD16Unorm),
+    GL_DEPTH_COMPONENT24,
+    GL_DEPTH_COMPONENT16,
   };
   it = std::find_first_of(swapchain_fmts.begin(), swapchain_fmts.end(),
     expected_depth_formats.begin(), expected_depth_formats.end());
@@ -433,13 +440,13 @@ void OpenXrApp::init_views(std::unique_ptr<Graphic>& graphic) {
     // create Swapchain Image Views
     for (uint32_t j = 0; j < color_swapchain_image_count; j++) {
       color_swapchain_info.image_views.emplace_back(
-        graphic->create_swapchain_image_views(color_swapchain_info.swapchain, j,
-          Graphic::SwapchainType::COLOR, this->color_format_));
+        graphic->get_swapchain_image(
+          color_swapchain_info.swapchain, j, Graphic::SwapchainType::COLOR));
     }
     for (uint32_t j = 0; j < depth_swapchain_image_count; j++) {
       depth_swapchain_info.image_views.emplace_back(
-        graphic->create_swapchain_image_views(depth_swapchain_info.swapchain, j,
-          Graphic::SwapchainType::DEPTH, this->depth_format_));
+        graphic->get_swapchain_image(
+          depth_swapchain_info.swapchain, j, Graphic::SwapchainType::DEPTH));
     }
   }
 
@@ -464,9 +471,8 @@ void OpenXrApp::init_buffers(std::unique_ptr<Graphic>& graphic) {
     -0.5F, -0.5F, 0.0F,  // left,  top
     -0.5F, +0.5F, 0.0F   // left,  bottom
   };
-  this->vertex_buffer_ =
-    std::make_unique<Graphic::Buffer>(graphic->create_buffer(vertices.data(),
-      sizeof(vertices), vk::BufferUsageFlagBits::eVertexBuffer));
+  this->vertex_buffer_ = std::make_unique<Graphic::Buffer>(
+    graphic->create_buffer(vertices.data(), sizeof(vertices), GL_ARRAY_BUFFER));
 
   // index buffer
   std::array<uint16_t, 6> indices = {
@@ -475,6 +481,6 @@ void OpenXrApp::init_buffers(std::unique_ptr<Graphic>& graphic) {
   };
   this->index_buffer_ =
     std::make_unique<Graphic::Buffer>(graphic->create_buffer(
-      indices.data(), sizeof(indices), vk::BufferUsageFlagBits::eIndexBuffer));
+      indices.data(), sizeof(indices), GL_ELEMENT_ARRAY_BUFFER));
 }
 }  // namespace yabe_quest
