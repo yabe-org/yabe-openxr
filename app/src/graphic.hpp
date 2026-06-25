@@ -1,28 +1,19 @@
 #pragma once
-#define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS 1
 
 // must be included before openxr_platform.h
 #include <android_native_app_glue.h>
-#include <vulkan/vulkan.h>
 // this is a comment to disable reorder include by clang-format
 
 #include <android/asset_manager.h>
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 
-#include <functional>
 #include <map>
 #include <vector>
-
-// Note: clangd adds this; surrounded by quote, not like `<vulkan/vulkan.hpp>`
-// this may because CMake uses FetchContent
-#include "vulkan/vulkan_raii.hpp"
 
 namespace handover {
 class OpenXrApp;
 
-// Vulkan instance needs OpenXrApp, who tells what Vulkan instance extensions
-// are required by OpenXR, so OpenXrApp must be created before Graphic
 class Graphic {
  public:
   Graphic(std::unique_ptr<OpenXrApp>& openxr_app, AAssetManager* asset_manager);
@@ -33,7 +24,8 @@ class Graphic {
   // (xrEnumerateSwapchainFormats() requires the session as an argument)
   void init_pipeline(uint32_t color_format, uint32_t depth_format);
 
-  [[nodiscard]] XrGraphicsBindingVulkanKHR get_graphics_binding() const;
+  [[nodiscard]] XrGraphicsBindingOpenGLESAndroidKHR get_graphics_binding()
+    const;
 
   enum class SwapchainType : uint8_t {
     COLOR,

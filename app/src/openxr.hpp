@@ -9,7 +9,7 @@
 
 #include "graphic.hpp"
 
-namespace handover {
+namespace yabe_quest {
 class OpenXrApp {
  public:
   explicit OpenXrApp(android_app* app);
@@ -20,11 +20,6 @@ class OpenXrApp {
   void init_later(std::unique_ptr<Graphic>& graphic);
   /// @return false if the app is exited
   bool pool(std::unique_ptr<Graphic>& graphic);
-
-  [[nodiscard]] std::vector<std::string> get_vulkan_instance_extensions() const;
-  [[nodiscard]] std::vector<std::string> get_vulkan_device_extensions() const;
-  [[nodiscard]] VkPhysicalDevice         get_vulkan_physical_device(
-            const vk::raii::Instance& vk_instance) const;
 
  private:
   void init_instance(android_app* app);
@@ -69,8 +64,5 @@ class OpenXrApp {
   std::vector<SwapchainInfo> depth_swapchains_;
 
   XrSpace local_space_;
-
-  std::unique_ptr<Graphic::Buffer> vertex_buffer_ = nullptr;
-  std::unique_ptr<Graphic::Buffer> index_buffer_  = nullptr;
 };
-}  // namespace handover
+}  // namespace yabe_quest

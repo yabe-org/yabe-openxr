@@ -38,7 +38,7 @@ inline void _ensure(
 #define ENSURE(func) _ensure(this->instance_, func, #func)
 }  // namespace
 
-namespace handover {
+namespace yabe_quest {
 OpenXrApp::OpenXrApp(android_app* app) {
   this->init_instance(app);
 }
@@ -46,7 +46,6 @@ OpenXrApp::OpenXrApp(android_app* app) {
 void OpenXrApp::init_later(std::unique_ptr<Graphic>& graphic) {
   this->init_session(graphic);
   this->init_formats();
-  graphic->init_pipeline(this->color_format_, this->depth_format_);
   this->init_views(graphic);
   this->init_buffers(graphic);
 }
@@ -59,60 +58,6 @@ OpenXrApp::~OpenXrApp() {
   if (this->instance_ != XR_NULL_HANDLE) {
     xrDestroyInstance(this->instance_);
   }
-}
-
-std::vector<std::string> OpenXrApp::get_vulkan_instance_extensions() const {
-  PFN_xrGetVulkanInstanceExtensionsKHR xr_get_vulkan_instance_extensions =
-    nullptr;
-  ENSURE(
-    xrGetInstanceProcAddr(this->instance_, "xrGetVulkanInstanceExtensionsKHR",
-      (PFN_xrVoidFunction*)&xr_get_vulkan_instance_extensions));
-  uint32_t extension_count = 0;
-  ENSURE(xr_get_vulkan_instance_extensions(
-    this->instance_, this->system_id_, 0, &extension_count, nullptr));
-  std::vector<char> extensions(extension_count);
-  ENSURE(xr_get_vulkan_instance_extensions(this->instance_, this->system_id_,
-    extension_count, &extension_count, extensions.data()));
-
-  std::stringstream        ss(extensions.data());
-  std::vector<std::string> result;
-  std::string              item;
-  while (std::getline(ss, item, ' ')) {
-    result.push_back(item);
-  }
-  return result;
-}
-
-std::vector<std::string> OpenXrApp::get_vulkan_device_extensions() const {
-  PFN_xrGetVulkanDeviceExtensionsKHR xr_get_vulkan_device_extensions = nullptr;
-  ENSURE(
-    xrGetInstanceProcAddr(this->instance_, "xrGetVulkanDeviceExtensionsKHR",
-      (PFN_xrVoidFunction*)&xr_get_vulkan_device_extensions));
-  uint32_t extension_count = 0;
-  ENSURE(xr_get_vulkan_device_extensions(
-    this->instance_, this->system_id_, 0, &extension_count, nullptr));
-  std::vector<char> extensions(extension_count);
-  ENSURE(xr_get_vulkan_device_extensions(this->instance_, this->system_id_,
-    extension_count, &extension_count, extensions.data()));
-
-  std::stringstream        ss(extensions.data());
-  std::vector<std::string> result;
-  std::string              item;
-  while (std::getline(ss, item, ' ')) {
-    result.push_back(item);
-  }
-  return result;
-}
-
-VkPhysicalDevice OpenXrApp::get_vulkan_physical_device(
-  const vk::raii::Instance& vk_instance) const {
-  PFN_xrGetVulkanGraphicsDeviceKHR xr_get_vulkan_graphics_device = nullptr;
-  ENSURE(xrGetInstanceProcAddr(this->instance_, "xrGetVulkanGraphicsDeviceKHR",
-    (PFN_xrVoidFunction*)&xr_get_vulkan_graphics_device));
-  VkPhysicalDevice vk_physical_device = VK_NULL_HANDLE;
-  ENSURE(xr_get_vulkan_graphics_device(
-    this->instance_, this->system_id_, *vk_instance, &vk_physical_device));
-  return vk_physical_device;
 }
 
 bool OpenXrApp::pool(std::unique_ptr<Graphic>& graphic) {
@@ -360,17 +305,6 @@ void OpenXrApp::init_instance(android_app* app) {
 }
 
 void OpenXrApp::init_session(std::unique_ptr<Graphic>& graphic) {
-  PFN_xrGetVulkanGraphicsRequirementsKHR xr_get_vulkan_graphics_requirements =
-    nullptr;
-  ENSURE(
-    xrGetInstanceProcAddr(this->instance_, "xrGetVulkanGraphicsRequirementsKHR",
-      (PFN_xrVoidFunction*)&xr_get_vulkan_graphics_requirements));
-  XrGraphicsRequirementsVulkanKHR graphics_requirements{
-    XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR};
-  // this must be called, ignore the result for now
-  ENSURE(xr_get_vulkan_graphics_requirements(
-    this->instance_, this->system_id_, &graphics_requirements));
-
   const auto          graphics_binding = graphic->get_graphics_binding();
   XrSessionCreateInfo sci{
     .type        = XR_TYPE_SESSION_CREATE_INFO,
@@ -543,4 +477,4 @@ void OpenXrApp::init_buffers(std::unique_ptr<Graphic>& graphic) {
     std::make_unique<Graphic::Buffer>(graphic->create_buffer(
       indices.data(), sizeof(indices), vk::BufferUsageFlagBits::eIndexBuffer));
 }
-}  // namespace handover
+}  // namespace yabe_quest

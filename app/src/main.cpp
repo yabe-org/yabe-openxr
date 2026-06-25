@@ -23,13 +23,12 @@ int android_pool(android_app* app) {
 void android_main(android_app* app) {
   JNIEnv* env = nullptr;
   app->activity->vm->AttachCurrentThread(&env, nullptr);
-  LOG_INFO("Hello from Android!");
 
-  std::unique_ptr<handover::OpenXrApp> openxr_app = nullptr;
-  std::unique_ptr<handover::Graphic>   graphic    = nullptr;
+  std::unique_ptr<yabe_quest::OpenXrApp> openxr_app = nullptr;
+  std::unique_ptr<yabe_quest::Graphic>   graphic    = nullptr;
   try {
-    openxr_app = std::make_unique<handover::OpenXrApp>(app);
-    graphic    = std::make_unique<handover::Graphic>(
+    openxr_app = std::make_unique<yabe_quest::OpenXrApp>(app);
+    graphic    = std::make_unique<yabe_quest::Graphic>(
       openxr_app, app->activity->assetManager);
     openxr_app->init_later(graphic);
     LOG_INFO("Initialization completed");

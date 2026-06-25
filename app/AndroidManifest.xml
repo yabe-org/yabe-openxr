@@ -33,7 +33,7 @@
         >
       <meta-data
           android:name="android.app.lib_name"
-          android:value="handover"
+          android:value="yabe_quest"
           />
       <intent-filter>
         <action android:name="android.intent.action.MAIN" />

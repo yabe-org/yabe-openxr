@@ -18,12 +18,12 @@ apply plugin: 'com.android.application'
 android {
   compileSdk 33
   ndkVersion '29.0.14206865'
-  namespace "net.watasuke.handover"
+  namespace "net.watasuke.yabe_quest"
 
   defaultConfig {
-    applicationId "net.watasuke.handover"
-    minSdk 29
-    targetSdk 33
+    applicationId "net.watasuke.yabe_quest"
+    minSdk 28
+    targetSdk 28
     versionCode 1
     versionName "1.0.0"
 
