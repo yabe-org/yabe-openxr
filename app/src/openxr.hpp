@@ -4,7 +4,6 @@
 #include <openxr/openxr.h>
 
 #include <memory>
-#include <string>
 #include <vector>
 
 #include "graphic.hpp"
@@ -12,16 +11,13 @@
 namespace yabe_openxr {
 class OpenXrApp {
  public:
-  explicit OpenXrApp(android_app* app);
+  OpenXrApp(android_app* app, std::unique_ptr<Graphic>& graphic);
   ~OpenXrApp();
 
-  /// must be called after initializing Graphic instance,
-  /// which depends on OpenXR instance, is initialized
-  void init_later(std::unique_ptr<Graphic>& graphic);
   /// @return false if the app is exited
   bool pool(std::unique_ptr<Graphic>& graphic);
 
-  bool is_session_running() const {
+  [[nodiscard]] bool is_session_running() const {
     return is_session_running_;
   }
 
@@ -60,16 +56,13 @@ class OpenXrApp {
   XrViewConfigurationType              view_config_type_ =
     XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
   struct SwapchainInfo {
-    XrSwapchain                      swapchain        = XR_NULL_HANDLE;
-    int64_t                          swapchain_format = 0;
-    std::vector<uint32_t>            image_views;
+    XrSwapchain           swapchain        = XR_NULL_HANDLE;
+    int64_t               swapchain_format = 0;
+    std::vector<uint32_t> image_views;
   };
   std::vector<SwapchainInfo> color_swapchains_;
   std::vector<SwapchainInfo> depth_swapchains_;
 
   XrSpace local_space_;
-
-  std::unique_ptr<Graphic::Buffer> vertex_buffer_;
-  std::unique_ptr<Graphic::Buffer> index_buffer_;
 };
 }  // namespace yabe_openxr

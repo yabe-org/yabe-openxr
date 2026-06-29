@@ -39,10 +39,15 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
   GLM_ENABLE_EXPERIMENTAL
 )
 
+add_library(yabe-compositor STATIC IMPORTED)
+set_target_properties(yabe-compositor PROPERTIES
+  IMPORTED_LOCATION ${CMAKE_CURRENT_LIST_DIR}/../../yabe-compositor/android-build/libyabe_compositor.a)
+
 target_include_directories(${PROJECT_NAME}
   PRIVATE src
   SYSTEM PRIVATE
   ${ANDROID_NDK}/sources/android/native_app_glue
+  ${CMAKE_CURRENT_LIST_DIR}/../../yabe-compositor/core
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -54,6 +59,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   native_app_glue
   log
   andlify_core
+  yabe-compositor
 )
 
 set_property(

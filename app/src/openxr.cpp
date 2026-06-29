@@ -1,10 +1,10 @@
 #include "openxr.hpp"
 
-#include <GLES3/gl3.h>
 #include <android/asset_manager.h>
 #include <android/log.h>
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
+#include <yabe-compositor.h>
 
 #include <array>
 #include <cstring>
@@ -12,6 +12,7 @@
 #include <stdexcept>
 
 #include "glm/ext.hpp"
+#include "glm/gtc/type_ptr.hpp"
 #include "graphic.hpp"
 #include "log.hpp"
 
@@ -38,15 +39,11 @@ inline void _ensure(
 }  // namespace
 
 namespace yabe_openxr {
-OpenXrApp::OpenXrApp(android_app* app) {
+OpenXrApp::OpenXrApp(android_app* app, std::unique_ptr<Graphic>& graphic) {
   this->init_instance(app);
-}
-
-void OpenXrApp::init_later(std::unique_ptr<Graphic>& graphic) {
   this->init_session(graphic);
   this->init_formats();
   this->init_views(graphic);
-  this->init_buffers(graphic);
 }
 
 OpenXrApp::~OpenXrApp() {
@@ -81,8 +78,6 @@ bool OpenXrApp::pool(std::unique_ptr<Graphic>& graphic) {
     }
     event_data.type = XR_TYPE_EVENT_DATA_BUFFER;
   }
-
-
 
   if (this->is_session_running_) {
     this->render(graphic);
@@ -156,7 +151,7 @@ void OpenXrApp::render_layer(
   uint32_t            view_count = 0;
   std::vector<XrView> views(this->view_config_views_.size(), {XR_TYPE_VIEW});
   auto                result = xrLocateViews(this->session_, &vli, &view_state,
-                   static_cast<uint32_t>(views.size()), &view_count, views.data());
+    static_cast<uint32_t>(views.size()), &view_count, views.data());
   if (result != XR_SUCCESS) {
     return;
   }
@@ -217,30 +212,22 @@ void OpenXrApp::render_layer(
     const auto tan_up     = std::tan(views[i].fov.angleUp);
     const auto tan_down   = std::tan(views[i].fov.angleDown);
     const auto tan_width  = tan_right - tan_left;
-    const auto tan_height = tan_down - tan_up;
+    const auto tan_height = tan_up - tan_down;
     const auto proj_near  = 0.01F;
     const auto proj_far   = 100.F;
     auto       proj       = glm::mat4(0.F);
     proj[0][0]            = 2.F / tan_width;
     proj[2][0]            = (tan_right + tan_left) / tan_width;
-    proj[1][1]            = 2.F / tan_height;  // flip Y
+    proj[1][1]            = 2.F / tan_height;
     proj[2][1]            = (tan_up + tan_down) / tan_height;
     proj[2][2]            = -proj_far / (proj_far - proj_near);
     proj[3][2]            = -(proj_far * proj_near) / (proj_far - proj_near);
     proj[2][3]            = -1.F;
+    const auto vp_mat     = proj * view;
 
-    graphic->rendering_scope([&]() {
-      graphic->set_render_attachments(
-        color_swapchain_info.image_views[color_image_index],
-        depth_swapchain_info.image_views[depth_image_index], width, height,
-        0.9F, 0.4F, 0.4F, 1.0F, 1.0F);
-      graphic->set_viewport(0.0F, 0.0F, static_cast<float>(width),
-        static_cast<float>(height), 0.0F, 1.0F);
-      graphic->set_scissor(0, 0, width, height);
-      graphic->set_view_projection(view, proj);
-      graphic->set_buffers(*this->vertex_buffer_, *this->index_buffer_);
-      graphic->draw_indexed(6);
-    });
+    graphic->draw(color_swapchain_info.image_views[color_image_index],
+      depth_swapchain_info.image_views[depth_image_index], width, height,
+      vp_mat);
 
     XrSwapchainImageReleaseInfo sri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     ENSURE(xrReleaseSwapchainImage(color_swapchain_info.swapchain, &sri));
@@ -422,7 +409,7 @@ void OpenXrApp::init_views(std::unique_ptr<Graphic>& graphic) {
       .next        = nullptr,
       .createFlags = 0,
       .usageFlags  = XR_SWAPCHAIN_USAGE_SAMPLED_BIT |
-                    XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT,
+                     XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT,
       .format      = this->color_format_,
       .sampleCount = config_view.recommendedSwapchainSampleCount,
       .width       = config_view.recommendedImageRectWidth,
@@ -438,7 +425,7 @@ void OpenXrApp::init_views(std::unique_ptr<Graphic>& graphic) {
 
     sci.usageFlags = XR_SWAPCHAIN_USAGE_SAMPLED_BIT |
                      XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-    sci.format                 = this->depth_format_;
+    sci.format     = this->depth_format_;
     auto& depth_swapchain_info = this->depth_swapchains_[i];
     ENSURE(
       xrCreateSwapchain(this->session_, &sci, &depth_swapchain_info.swapchain));
@@ -489,26 +476,5 @@ void OpenXrApp::init_views(std::unique_ptr<Graphic>& graphic) {
       },
   };
   ENSURE(xrCreateReferenceSpace(this->session_, &rsci, &this->local_space_));
-}
-
-void OpenXrApp::init_buffers(std::unique_ptr<Graphic>& graphic) {
-  // vertex buffer
-  std::array<float, 3 * 4> vertices = {
-    +0.5F, +0.5F, -2.0F,  // right, bottom
-    +0.5F, -0.5F, -2.0F,  // right, top
-    -0.5F, -0.5F, -2.0F,  // left,  top
-    -0.5F, +0.5F, -2.0F   // left,  bottom
-  };
-  this->vertex_buffer_ = std::make_unique<Graphic::Buffer>(
-    graphic->create_buffer(vertices.data(), sizeof(vertices), GL_ARRAY_BUFFER));
-
-  // index buffer
-  std::array<uint16_t, 6> indices = {
-    0, 1, 2,  //
-    2, 3, 0   //
-  };
-  this->index_buffer_ =
-    std::make_unique<Graphic::Buffer>(graphic->create_buffer(
-      indices.data(), sizeof(indices), GL_ELEMENT_ARRAY_BUFFER));
 }
 }  // namespace yabe_openxr

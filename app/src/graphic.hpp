@@ -12,22 +12,15 @@
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 
-#include <functional>
+#include <glm/glm.hpp>
 #include <map>
-#include <memory>
 #include <vector>
 
-#include "glm/ext/matrix_transform.hpp"
-
 namespace yabe_openxr {
-class OpenXrApp;
-
 class Graphic {
  public:
-  Graphic(std::unique_ptr<OpenXrApp>& openxr_app, AAssetManager* asset_manager);
+  explicit Graphic();
   ~Graphic();
-
-  void init_pipeline(uint32_t color_format, uint32_t depth_format);
 
   [[nodiscard]] XrGraphicsBindingOpenGLESAndroidKHR get_graphics_binding()
     const;
@@ -41,35 +34,8 @@ class Graphic {
     XrSwapchain swapchain, SwapchainType type, uint32_t count);
   uint32_t get_swapchain_image(
     XrSwapchain swapchain, uint32_t index, SwapchainType type);
-
-  class Buffer {
-   public:
-    Buffer(uint32_t buffer) : buffer_(buffer) {
-    }
-    ~Buffer() {
-    }
-    [[nodiscard]] uint32_t buffer() const {
-      return this->buffer_;
-    }
-
-   private:
-    uint32_t buffer_;
-  };
-
-  Graphic::Buffer create_buffer(const void* data, size_t size, uint32_t target);
-
-  void rendering_scope(const std::function<void()>& func);
-  void set_render_attachments(uint32_t color_texture, uint32_t depth_texture,
-    uint32_t width, uint32_t height, float clear_r, float clear_g,
-    float clear_b, float clear_a, float clear_depth);
-  void set_viewport(float x, float y, float width, float height,
-    float min_depth, float max_depth);
-  void set_scissor(
-    int32_t offset_x, int32_t offset_y, uint32_t width, uint32_t height);
-  void set_view_projection(const glm::mat4& view, const glm::mat4& projection);
-  void set_buffers(
-    const Graphic::Buffer& vertex_buffer, const Graphic::Buffer& index_buffer);
-  void draw_indexed(uint32_t index_count);
+  void draw(uint32_t color_texture, uint32_t depth_texture, int32_t width,
+    int32_t height, const glm::mat4& vp_mat);
 
  private:
   void init_egl();
@@ -85,9 +51,6 @@ class Graphic {
     std::vector<XrSwapchainImageOpenGLESKHR> images;
   };
   std::map<XrSwapchain, SwapchainInfo> swapchains_;
-
-  uint32_t shader_program_ = 0;
-  uint32_t vao_            = 0;
-  uint32_t frame_buffer_   = 0;
+  uint32_t                             frame_buffer_ = 0;
 };
 }  // namespace yabe_openxr
