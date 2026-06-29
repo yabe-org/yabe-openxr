@@ -9,7 +9,7 @@
 
 #include "graphic.hpp"
 
-namespace yabe_quest {
+namespace yabe_openxr {
 class OpenXrApp {
  public:
   explicit OpenXrApp(android_app* app);
@@ -68,4 +68,4 @@ class OpenXrApp {
   std::unique_ptr<Graphic::Buffer> vertex_buffer_;
   std::unique_ptr<Graphic::Buffer> index_buffer_;
 };
-}  // namespace yabe_quest
+}  // namespace yabe_openxr

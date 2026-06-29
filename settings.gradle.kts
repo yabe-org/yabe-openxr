@@ -6,5 +6,5 @@
  * This project uses @Incubating APIs which are subject to change.
  */
 
-rootProject.name = "yabe_quest"
+rootProject.name = "yabe_openxr"
 include("app")

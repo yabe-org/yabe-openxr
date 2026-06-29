@@ -8,7 +8,6 @@
 #include <EGL/eglext.h>
 #include <GLES3/gl3.h>
 #include <GLES3/gl3ext.h>
-
 #include <android/asset_manager.h>
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
@@ -18,7 +17,9 @@
 #include <memory>
 #include <vector>
 
-namespace yabe_quest {
+#include "glm/ext/matrix_transform.hpp"
+
+namespace yabe_openxr {
 class OpenXrApp;
 
 class Graphic {
@@ -28,7 +29,8 @@ class Graphic {
 
   void init_pipeline(uint32_t color_format, uint32_t depth_format);
 
-  [[nodiscard]] XrGraphicsBindingOpenGLESAndroidKHR get_graphics_binding() const;
+  [[nodiscard]] XrGraphicsBindingOpenGLESAndroidKHR get_graphics_binding()
+    const;
 
   enum class SwapchainType : uint8_t {
     COLOR,
@@ -37,13 +39,18 @@ class Graphic {
 
   XrSwapchainImageBaseHeader* acquire_swapchain_image(
     XrSwapchain swapchain, SwapchainType type, uint32_t count);
-  uint32_t get_swapchain_image(XrSwapchain swapchain, uint32_t index, SwapchainType type);
+  uint32_t get_swapchain_image(
+    XrSwapchain swapchain, uint32_t index, SwapchainType type);
 
   class Buffer {
    public:
-    Buffer(uint32_t buffer) : buffer_(buffer) {}
-    ~Buffer() {}
-    [[nodiscard]] uint32_t buffer() const { return this->buffer_; }
+    Buffer(uint32_t buffer) : buffer_(buffer) {
+    }
+    ~Buffer() {
+    }
+    [[nodiscard]] uint32_t buffer() const {
+      return this->buffer_;
+    }
 
    private:
     uint32_t buffer_;
@@ -55,9 +62,13 @@ class Graphic {
   void set_render_attachments(uint32_t color_texture, uint32_t depth_texture,
     uint32_t width, uint32_t height, float clear_r, float clear_g,
     float clear_b, float clear_a, float clear_depth);
-  void set_viewport(float x, float y, float width, float height, float min_depth, float max_depth);
-  void set_scissor(int32_t offset_x, int32_t offset_y, uint32_t width, uint32_t height);
-  void set_buffers(const Graphic::Buffer& vertex_buffer, const Graphic::Buffer& index_buffer);
+  void set_viewport(float x, float y, float width, float height,
+    float min_depth, float max_depth);
+  void set_scissor(
+    int32_t offset_x, int32_t offset_y, uint32_t width, uint32_t height);
+  void set_view_projection(const glm::mat4& view, const glm::mat4& projection);
+  void set_buffers(
+    const Graphic::Buffer& vertex_buffer, const Graphic::Buffer& index_buffer);
   void draw_indexed(uint32_t index_count);
 
  private:
@@ -70,13 +81,13 @@ class Graphic {
   EGLConfig  egl_config_  = nullptr;
 
   struct SwapchainInfo {
-    SwapchainType type;
+    SwapchainType                            type;
     std::vector<XrSwapchainImageOpenGLESKHR> images;
   };
   std::map<XrSwapchain, SwapchainInfo> swapchains_;
 
   uint32_t shader_program_ = 0;
-  uint32_t vao_ = 0;
-  uint32_t frame_buffer_ = 0;
+  uint32_t vao_            = 0;
+  uint32_t frame_buffer_   = 0;
 };
-}  // namespace yabe_quest
+}  // namespace yabe_openxr

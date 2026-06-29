@@ -9,9 +9,9 @@
 #include <array>
 #include <cstring>
 #include <format>
-#include <sstream>
 #include <stdexcept>
 
+#include "glm/ext.hpp"
 #include "graphic.hpp"
 #include "log.hpp"
 
@@ -37,7 +37,7 @@ inline void _ensure(
 #define ENSURE(func) _ensure(this->instance_, func, #func)
 }  // namespace
 
-namespace yabe_quest {
+namespace yabe_openxr {
 OpenXrApp::OpenXrApp(android_app* app) {
   this->init_instance(app);
 }
@@ -205,6 +205,37 @@ void OpenXrApp::render_layer(
         },
     };
 
+    const glm::quat view_quat{
+      views[i].pose.orientation.w,
+      views[i].pose.orientation.x,
+      views[i].pose.orientation.y,
+      views[i].pose.orientation.z,
+    };
+    const glm::vec3 view_pos{
+      views[i].pose.position.x,
+      views[i].pose.position.y,
+      views[i].pose.position.z,
+    };
+    const auto view = glm::toMat4(glm::inverse(view_quat)) *
+                      glm::translate(glm::mat4(1.F), -view_pos);
+
+    const auto tan_left   = std::tan(views[i].fov.angleLeft);
+    const auto tan_right  = std::tan(views[i].fov.angleRight);
+    const auto tan_up     = std::tan(views[i].fov.angleUp);
+    const auto tan_down   = std::tan(views[i].fov.angleDown);
+    const auto tan_width  = tan_right - tan_left;
+    const auto tan_height = tan_down - tan_up;
+    const auto proj_near  = 0.01F;
+    const auto proj_far   = 100.F;
+    auto       proj       = glm::mat4(0.F);
+    proj[0][0]            = 2.F / tan_width;
+    proj[2][0]            = (tan_right + tan_left) / tan_width;
+    proj[1][1]            = 2.F / tan_height;  // flip Y
+    proj[2][1]            = (tan_up + tan_down) / tan_height;
+    proj[2][2]            = -proj_far / (proj_far - proj_near);
+    proj[3][2]            = -(proj_far * proj_near) / (proj_far - proj_near);
+    proj[2][3]            = -1.F;
+
     graphic->rendering_scope([&]() {
       graphic->set_render_attachments(
         color_swapchain_info.image_views[color_image_index],
@@ -213,6 +244,7 @@ void OpenXrApp::render_layer(
       graphic->set_viewport(0.0F, 0.0F, static_cast<float>(width),
         static_cast<float>(height), 0.0F, 1.0F);
       graphic->set_scissor(0, 0, width, height);
+      graphic->set_view_projection(view, proj);
       graphic->set_buffers(*this->vertex_buffer_, *this->index_buffer_);
       graphic->draw_indexed(6);
     });
@@ -247,12 +279,11 @@ void OpenXrApp::init_instance(android_app* app) {
   XrApplicationInfo ai{
     .applicationName    = "",
     .applicationVersion = 1,
-    .engineName         = "YabeForQuest",
+    .engineName         = "YabeOpenXR",
     .engineVersion      = 1,
     .apiVersion         = XR_CURRENT_API_VERSION,
   };
-  std::strncpy(
-    ai.applicationName, "YabeForQuest", XR_MAX_APPLICATION_NAME_SIZE);
+  std::strncpy(ai.applicationName, "YabeOpenXR", XR_MAX_APPLICATION_NAME_SIZE);
 
   const std::vector<const char*> required_extensions = {
     XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
@@ -309,10 +340,14 @@ void OpenXrApp::init_session(std::unique_ptr<Graphic>& graphic) {
     .type = XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_ES_KHR,
     .next = nullptr,
   };
-  PFN_xrGetOpenGLESGraphicsRequirementsKHR pfnGetOpenGLESGraphicsRequirementsKHR = nullptr;
-  ENSURE(xrGetInstanceProcAddr(this->instance_, "xrGetOpenGLESGraphicsRequirementsKHR",
-    reinterpret_cast<PFN_xrVoidFunction*>(&pfnGetOpenGLESGraphicsRequirementsKHR)));
-  ENSURE(pfnGetOpenGLESGraphicsRequirementsKHR(this->instance_, this->system_id_, &reqs));
+  PFN_xrGetOpenGLESGraphicsRequirementsKHR
+    pfnGetOpenGLESGraphicsRequirementsKHR = nullptr;
+  ENSURE(xrGetInstanceProcAddr(this->instance_,
+    "xrGetOpenGLESGraphicsRequirementsKHR",
+    reinterpret_cast<PFN_xrVoidFunction*>(
+      &pfnGetOpenGLESGraphicsRequirementsKHR)));
+  ENSURE(pfnGetOpenGLESGraphicsRequirementsKHR(
+    this->instance_, this->system_id_, &reqs));
 
   const auto          graphics_binding = graphic->get_graphics_binding();
   XrSessionCreateInfo sci{
@@ -466,10 +501,10 @@ void OpenXrApp::init_views(std::unique_ptr<Graphic>& graphic) {
 void OpenXrApp::init_buffers(std::unique_ptr<Graphic>& graphic) {
   // vertex buffer
   std::array<float, 3 * 4> vertices = {
-    +0.5F, +0.5F, 0.0F,  // right, bottom
-    +0.5F, -0.5F, 0.0F,  // right, top
-    -0.5F, -0.5F, 0.0F,  // left,  top
-    -0.5F, +0.5F, 0.0F   // left,  bottom
+    +0.5F, +0.5F, -2.0F,  // right, bottom
+    +0.5F, -0.5F, -2.0F,  // right, top
+    -0.5F, -0.5F, -2.0F,  // left,  top
+    -0.5F, +0.5F, -2.0F   // left,  bottom
   };
   this->vertex_buffer_ = std::make_unique<Graphic::Buffer>(
     graphic->create_buffer(vertices.data(), sizeof(vertices), GL_ARRAY_BUFFER));
@@ -483,4 +518,4 @@ void OpenXrApp::init_buffers(std::unique_ptr<Graphic>& graphic) {
     std::make_unique<Graphic::Buffer>(graphic->create_buffer(
       indices.data(), sizeof(indices), GL_ELEMENT_ARRAY_BUFFER));
 }
-}  // namespace yabe_quest
+}  // namespace yabe_openxr

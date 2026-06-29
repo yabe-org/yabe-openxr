@@ -32,7 +32,7 @@
         >
       <meta-data
           android:name="android.app.lib_name"
-          android:value="yabe_quest"
+          android:value="yabe_openxr"
           />
       <intent-filter>
         <action android:name="android.intent.action.MAIN" />

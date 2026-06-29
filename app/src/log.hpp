@@ -6,7 +6,7 @@
 
 #define _LOG(severity, fmt, ...)                                               \
   __android_log_print(                                                         \
-    severity, "YabeForQuest", "%s", std::format(fmt, ##__VA_ARGS__).c_str());
+    severity, "YabeOpenXR", "%s", std::format(fmt, ##__VA_ARGS__).c_str());
 
 #define LOG_ERROR(fmt, ...) _LOG(ANDROID_LOG_ERROR, fmt, ##__VA_ARGS__)
 #define LOG_WARN(fmt, ...)  _LOG(ANDROID_LOG_WARN, fmt, ##__VA_ARGS__)

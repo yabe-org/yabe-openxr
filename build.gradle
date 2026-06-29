@@ -18,10 +18,10 @@ apply plugin: 'com.android.application'
 android {
   compileSdk 33
   ndkVersion '29.0.14206865'
-  namespace "net.watasuke.yabe_quest"
+  namespace "org.yabe.openxr"
 
   defaultConfig {
-    applicationId "net.watasuke.yabe_quest"
+    applicationId "org.yabe.openxr"
     minSdk 28
     targetSdk 28
     versionCode 1

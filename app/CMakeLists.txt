@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25) # for FetchContent_Declare(SYSTEM)
-project(yabe_quest LANGUAGES C CXX)
+project(yabe_openxr LANGUAGES C CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_COLOR_DIAGNOSTICS ON) # for CMake >= 3.24
@@ -29,6 +29,7 @@ target_compile_options(${PROJECT_NAME} PRIVATE
 target_compile_definitions(${PROJECT_NAME} PRIVATE
   XR_USE_GRAPHICS_API_OPENGL_ES
   XR_USE_PLATFORM_ANDROID
+  GLM_ENABLE_EXPERIMENTAL
 )
 
 target_include_directories(${PROJECT_NAME}
