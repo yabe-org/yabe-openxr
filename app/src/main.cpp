@@ -1,8 +1,11 @@
 #include <android/asset_manager.h>
+#include <android/input.h>
+#include <android/log.h>
 #include <android/looper.h>
 #include <android_native_app_glue.h>
 #include <bits/wait.h>
 #include <fcntl.h>
+#include <linux/input-event-codes.h>
 #include <ptrace_engine.h>
 #include <rootfs_extractor.h>
 #include <sys/wait.h>
@@ -17,6 +20,7 @@
 #include "graphic.hpp"
 #include "log.hpp"
 #include "openxr.hpp"
+#include "pointer_capture.hpp"
 #include "yabe-compositor.h"
 
 namespace {
@@ -64,7 +68,7 @@ int andlify_entrypoint() {
       LOG_ERROR("fork(): {}", std::strerror(errno));
     }
     if (child == 0) {
-      execl("/usr/bin/weston-terminal", "weston-terminal", nullptr);
+      execl("/usr/bin/weston-clickdot", "weston-clickdot", nullptr);
       std::exit(0);
     } else {
       LOG_DEBUG("child {} started", child);
@@ -78,6 +82,58 @@ int andlify_entrypoint() {
         break;
       }
     }
+  }
+  return 0;
+}
+
+int32_t send_mouse_button_event(int32_t button, bool is_pressed) {
+  static int32_t prev_button = 0;
+  const auto     diff        = button ^ prev_button;
+  prev_button                = button;
+  if (diff == AMOTION_EVENT_BUTTON_PRIMARY) {
+    yabe_compositor_button(BTN_LEFT, is_pressed);
+    return 1;
+  }
+  if (diff == AMOTION_EVENT_BUTTON_SECONDARY) {
+    yabe_compositor_button(BTN_RIGHT, is_pressed);
+    return 1;
+  }
+  if (diff == AMOTION_EVENT_BUTTON_TERTIARY) {
+    yabe_compositor_button(BTN_MIDDLE, is_pressed);
+    return 1;
+  }
+  return 0;
+}
+int32_t handle_mouse_input(AInputEvent* event) {
+  const auto action = AMotionEvent_getAction(event);
+  switch (action) {
+    case AMOTION_EVENT_ACTION_BUTTON_PRESS:
+      return send_mouse_button_event(AMotionEvent_getButtonState(event), true);
+    case AMOTION_EVENT_ACTION_BUTTON_RELEASE:
+      return send_mouse_button_event(AMotionEvent_getButtonState(event), false);
+    case AMOTION_EVENT_ACTION_SCROLL:
+      yabe_compositor_axis(
+        0, AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_VSCROLL, 0));
+      return 1;
+    case AMOTION_EVENT_ACTION_MOVE:
+    case AMOTION_EVENT_ACTION_HOVER_MOVE: {
+      const auto dx =
+        AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_RELATIVE_X, 0);
+      const auto dy =
+        AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_RELATIVE_Y, 0);
+      constexpr float kScale = 0.002F;
+      yabe_compositor_move_pointer(dx * kScale, -dy * kScale);
+      return 1;
+    }
+    default:
+      return 0;
+  }
+
+  return 0;
+}
+int32_t handle_input_event(android_app* /*app*/, AInputEvent* event) {
+  if (AInputEvent_getType(event) == AINPUT_EVENT_TYPE_MOTION) {
+    handle_mouse_input(event);
   }
   return 0;
 }
@@ -113,6 +169,9 @@ void android_main(android_app* app) {
   }
 
   try {
+    app->onInputEvent = handle_input_event;
+    capture_pointer(app);
+
     auto graphic    = std::make_unique<yabe_openxr::Graphic>();
     auto openxr_app = std::make_unique<yabe_openxr::OpenXrApp>(app, graphic);
 
