@@ -8,6 +8,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -20,6 +21,8 @@
 #include "yabe-compositor.h"
 
 namespace {
+int terminate_notification_pipe = -1;
+
 void process_android_events(android_app* app, bool is_session_running) {
   android_poll_source* src     = nullptr;
   int                  events  = 0;
@@ -66,6 +69,24 @@ bool ensure_rootfs_extracted(
 void android_main(android_app* app) {
   JNIEnv* env = nullptr;
   app->activity->vm->AttachCurrentThread(&env, nullptr);
+  {
+    // if socket file exists, remove it
+    const auto socket_path =
+      std::format("{}/rootfs/tmp/wayland-1", app->activity->internalDataPath);
+    if (access(socket_path.c_str(), F_OK) == 0) {
+      unlink(socket_path.c_str());
+    }
+    const auto lock_path = socket_path + ".lock";
+    if (access(lock_path.c_str(), F_OK) == 0) {
+      unlink(lock_path.c_str());
+    }
+  }
+
+  // define pipe to call yabe_compositor_terminate() in chroot environment
+  int term_pipe[2] = {-1, -1};
+  if (pipe2(term_pipe, O_CLOEXEC) == 0) {
+    terminate_notification_pipe = term_pipe[0];
+  }
 
   std::atomic<bool> is_finished(false);
   std::atomic<int>  tracer_pid(-1);
@@ -74,23 +95,35 @@ void android_main(android_app* app) {
       std::format("{}/rootfs", app->activity->internalDataPath);
     ensure_rootfs_extracted(app, extract_dst_path);
 
+    const auto stdout_tmp =
+      std::format("{}/stdout.tmp", app->activity->internalDataPath);
+    const auto stderr_tmp =
+      std::format("{}/stderr.tmp", app->activity->internalDataPath);
+    int fd_out = open(stdout_tmp.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    int fd_err = open(stderr_tmp.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
+
     LOG_INFO("Starting chroot to {}", extract_dst_path);
     auto res = StartChrootFunc(
       extract_dst_path,
       []() -> int {
         LOG_DEBUG("chroot started!");
+
+        std::thread terminator([]() {
+          if (terminate_notification_pipe >= 0) {
+            char buf = 0;
+            if (read(terminate_notification_pipe, &buf, 1) > 0) {
+              yabe_compositor_terminate();
+            }
+          }
+        });
+        terminator.detach();
+
         setenv("XDG_RUNTIME_DIR", "/tmp", 1);
-        setenv("WAYLAND_DISPLAY", "wayland-0", 1);
+        setenv("WAYLAND_DISPLAY", "wayland-1", 1);
         setenv("WAYLAND_DEBUG", "1", 1);
 
         std::thread client_thread([]() {
           LOG_DEBUG("weston-terminal thread start!");
-          // while (true) {
-          //   int res = access("/tmp/wayland-0", F_OK);
-          //   if (res >= 0) {
-          //     break;
-          //   }
-          // }
           while (true) {
             int child = fork();
             if (child < 0) {
@@ -118,18 +151,39 @@ void android_main(android_app* app) {
         LOG_INFO("Starting YabeCompositor");
         yabe_compositor_start(
           [](const char* s) {
-            LOG_DEBUG("YabeCompositor log> {}", s);
+            // use raw log function instead log macros to use different tag
+            __android_log_print(ANDROID_LOG_DEBUG, "YabeCompositor", "%s", s);
           },
           -1);
         LOG_INFO("YabeCompositor finished");
         return 0;
       },
-      STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO);
+      STDIN_FILENO, fd_out, fd_err);
+
     if (res < 0) {
       return 0;
     }
     tracer_pid.store(res);
     while (!is_finished.load()) {}
+
+    if (fd_out >= 0) {
+      close(fd_out);
+    }
+    if (fd_err >= 0) {
+      close(fd_err);
+    }
+    std::rename(stdout_tmp.c_str(),
+      std::format("{}/stdout.txt", app->activity->internalDataPath).c_str());
+    std::rename(stderr_tmp.c_str(),
+      std::format("{}/stderr.txt", app->activity->internalDataPath).c_str());
+
+    auto stderr_content = std::ifstream(
+      std::format("{}/stderr.txt", app->activity->internalDataPath));
+    auto stderr_str =
+      std::string((std::istreambuf_iterator<char>(stderr_content)),
+        std::istreambuf_iterator<char>());
+    LOG_DEBUG("[STDERR]\n==========\n{}\n==========", stderr_str);
+
     return 0;
   });
 
@@ -154,13 +208,25 @@ void android_main(android_app* app) {
   } catch (const std::exception& e) {
     LOG_ERROR("[Exception] {}", e.what());
   }
+
+  if (term_pipe[1] >= 0) {
+    write(term_pipe[1], "q", 1);
+    close(term_pipe[1]);
+  }
+
   // OpenXR app should be destroyed before Graphic
   openxr_app.reset();
   graphic.reset();
 
+  // wait compositor to exit
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
   StopChroot(tracer_pid);
   is_finished.store(true);
   ptrace_thread.join();
+  // OpenXR app should be destroyed before Graphic
+  openxr_app.reset();
+  graphic.reset();
 
   app->activity->vm->DetachCurrentThread();
   LOG_INFO("Exiting");
