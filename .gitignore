@@ -3,4 +3,6 @@
 
 .cxx/
 build/
+# app/assets
+*.tar.zst
 

@@ -14,8 +14,15 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(glm)
 
-include(AndroidNdkModules)
-android_ndk_import_module_native_app_glue()
+FetchContent_Declare(
+  andlify
+  GIT_REPOSITORY https://github.com/watasuke102/andlify.git
+  GIT_TAG        main
+)
+FetchContent_MakeAvailable(andlify)
+
+add_library(native_app_glue STATIC ${ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c)
+target_include_directories(native_app_glue PUBLIC ${ANDROID_NDK}/sources/android/native_app_glue)
 
 file(GLOB_RECURSE lib_sources src/*.cpp)
 add_library(${PROJECT_NAME} MODULE ${lib_sources})
@@ -46,6 +53,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   android
   native_app_glue
   log
+  andlify_core
 )
 
 set_property(
