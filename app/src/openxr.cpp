@@ -82,14 +82,7 @@ bool OpenXrApp::pool(std::unique_ptr<Graphic>& graphic) {
     event_data.type = XR_TYPE_EVENT_DATA_BUFFER;
   }
 
-  switch (event_data.type) {
-    case XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED:
-      this->handle_session_state_changed(
-        *reinterpret_cast<XrEventDataSessionStateChanged*>(&event_data));
-      break;
-    default:
-      break;
-  }
+
 
   if (this->is_session_running_) {
     this->render(graphic);

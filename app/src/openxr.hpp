@@ -21,6 +21,10 @@ class OpenXrApp {
   /// @return false if the app is exited
   bool pool(std::unique_ptr<Graphic>& graphic);
 
+  bool is_session_running() const {
+    return is_session_running_;
+  }
+
  private:
   void init_instance(android_app* app);
   void init_session(std::unique_ptr<Graphic>& graphic);

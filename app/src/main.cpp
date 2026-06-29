@@ -16,15 +16,16 @@
 #include "openxr.hpp"
 
 namespace {
-int android_pool(android_app* app) {
+void process_android_events(android_app* app, bool is_session_running) {
   android_poll_source* src    = nullptr;
   int                  events = 0;
-  const int            pool_result =
-    ALooper_pollOnce(-1, nullptr, &events, reinterpret_cast<void**>(&src));
-  if (pool_result >= 0 && src) {
-    src->process(app, src);
+  int                  timeout = is_session_running ? 0 : -1;
+  while (ALooper_pollOnce(timeout, nullptr, &events, reinterpret_cast<void**>(&src)) >= 0) {
+    if (src) {
+      src->process(app, src);
+    }
+    timeout = 0;
   }
-  return pool_result;
 }
 /// return false if fails
 bool ensure_rootfs_extracted(
@@ -97,8 +98,9 @@ void android_main(android_app* app) {
     LOG_INFO("Initialization completed");
 
     while (true) {
-      if (auto ret = android_pool(app); ret < 0) {
-        LOG_WARN("ALooper_pollOnce() failed with result {}", ret);
+      process_android_events(app, openxr_app->is_session_running());
+      if (app->destroyRequested != 0) {
+        LOG_INFO("Android app destroy requested");
         break;
       }
       if (!openxr_app->pool(graphic)) {
