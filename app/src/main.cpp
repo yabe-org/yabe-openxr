@@ -8,7 +8,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -21,20 +20,6 @@
 #include "yabe-compositor.h"
 
 namespace {
-int terminate_notification_pipe = -1;
-
-void process_android_events(android_app* app, bool is_session_running) {
-  android_poll_source* src     = nullptr;
-  int                  events  = 0;
-  int                  timeout = is_session_running ? 0 : -1;
-  while (ALooper_pollOnce(
-           timeout, nullptr, &events, reinterpret_cast<void**>(&src)) >= 0) {
-    if (src) {
-      src->process(app, src);
-    }
-    timeout = 0;
-  }
-}
 /// return false if fails
 bool ensure_rootfs_extracted(
   android_app* app, const std::string& extract_dst_path) {
@@ -68,54 +53,46 @@ bool ensure_rootfs_extracted(
 int andlify_entrypoint() {
   LOG_DEBUG("chroot started!");
 
-  std::thread terminator([]() {
-    if (terminate_notification_pipe >= 0) {
-      char buf = 0;
-      if (read(terminate_notification_pipe, &buf, 1) > 0) {
-        yabe_compositor_terminate();
-      }
-    }
-  });
-  terminator.detach();
-
   setenv("XDG_RUNTIME_DIR", "/tmp", 1);
   setenv("WAYLAND_DISPLAY", "wayland-1", 1);
   setenv("WAYLAND_DEBUG", "1", 1);
 
-  std::thread client_thread([]() {
-    LOG_DEBUG("weston-terminal thread start!");
-    while (true) {
-      int child = fork();
-      if (child < 0) {
-        LOG_ERROR("fork(): {}", std::strerror(errno));
+  LOG_DEBUG("weston-terminal thread start!");
+  while (true) {
+    int child = fork();
+    if (child < 0) {
+      LOG_ERROR("fork(): {}", std::strerror(errno));
+    }
+    if (child == 0) {
+      execl("/usr/bin/weston-terminal", "weston-terminal", nullptr);
+      std::exit(0);
+    } else {
+      LOG_DEBUG("child {} started", child);
+      int status = 0;
+      if (waitpid(child, &status, 0) < 0) {
+        LOG_ERROR("wait(): {}", std::strerror(errno));
       }
-      if (child == 0) {
-        execl("/usr/bin/weston-terminal", "weston-terminal", nullptr);
-        std::exit(0);
-      } else {
-        LOG_DEBUG("child {} started", child);
-        int status = 0;
-        if (waitpid(child, &status, 0) < 0) {
-          LOG_ERROR("wait(): {}", std::strerror(errno));
-        }
-        int exit_status = WEXITSTATUS(status);
-        LOG_INFO("weston-terminal ({}) finished with {}", child, exit_status);
-        if (exit_status != 255) {
-          break;
-        }
+      int exit_status = WEXITSTATUS(status);
+      LOG_INFO("weston-terminal ({}) finished with {}", child, exit_status);
+      if (exit_status != 255) {
+        break;
       }
     }
-  });
-
-  LOG_INFO("Starting YabeCompositor");
-  yabe_compositor_start(
-    [](const char* s) {
-      // use raw log function instead log macros to use different tag
-      __android_log_print(ANDROID_LOG_DEBUG, "YabeCompositor", "%s", s);
-    },
-    -1);
-  LOG_INFO("YabeCompositor finished");
+  }
   return 0;
+}
+
+void process_android_events(android_app* app, bool is_session_running) {
+  android_poll_source* src     = nullptr;
+  int                  events  = 0;
+  int                  timeout = is_session_running ? 0 : -1;
+  while (ALooper_pollOnce(
+           timeout, nullptr, &events, reinterpret_cast<void**>(&src)) >= 0) {
+    if (src) {
+      src->process(app, src);
+    }
+    timeout = 0;
+  }
 }
 }  // namespace
 
@@ -135,21 +112,13 @@ void android_main(android_app* app) {
     }
   }
 
-  // define pipe to call yabe_compositor_terminate() in chroot environment
-  int term_pipe[2] = {-1, -1};
-  if (pipe2(term_pipe, O_CLOEXEC) == 0) {
-    terminate_notification_pipe = term_pipe[0];
-  }
-
-  std::unique_ptr<yabe_openxr::OpenXrApp> openxr_app = nullptr;
-  std::unique_ptr<yabe_openxr::Graphic>   graphic    = nullptr;
   try {
-    graphic    = std::make_unique<yabe_openxr::Graphic>();
-    openxr_app = std::make_unique<yabe_openxr::OpenXrApp>(app, graphic);
+    auto graphic    = std::make_unique<yabe_openxr::Graphic>();
+    auto openxr_app = std::make_unique<yabe_openxr::OpenXrApp>(app, graphic);
 
     std::atomic<bool> is_finished(false);
     std::atomic<int>  tracer_pid(-1);
-    std::thread       ptrace_thread([&app, &tracer_pid, &is_finished]() {
+    std::thread       andlify_thread([&app, &tracer_pid, &is_finished]() {
       const auto extract_dst_path =
         std::format("{}/rootfs", app->activity->internalDataPath);
       ensure_rootfs_extracted(app, extract_dst_path);
@@ -187,6 +156,21 @@ void android_main(android_app* app) {
 
       return 0;
     });
+    std::thread       compositor_thread([app]() {
+      const auto runtime_dir =
+        std::format("{}/rootfs/tmp", app->activity->internalDataPath);
+      setenv("XDG_RUNTIME_DIR", runtime_dir.c_str(), 1);
+      setenv("WAYLAND_DISPLAY", "wayland-1", 1);
+      setenv("WAYLAND_DEBUG", "1", 1);
+      LOG_INFO("Starting YabeCompositor");
+      yabe_compositor_start(
+        [](const char* s) {
+          // use raw log function instead log macros to use different tag
+          __android_log_print(ANDROID_LOG_DEBUG, "YabeCompositor", "%s", s);
+        },
+        -1);
+      LOG_INFO("YabeCompositor finished");
+    });
 
     LOG_INFO("Initialization completed");
     while (true) {
@@ -201,21 +185,13 @@ void android_main(android_app* app) {
       }
     }
 
-    if (term_pipe[1] >= 0) {
-      write(term_pipe[1], "q", 1);
-      close(term_pipe[1]);
-    }
-
-    // OpenXR app should be destroyed before Graphic
-    openxr_app.reset();
-    graphic.reset();
-
-    // wait compositor to exit
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // stop compositor at first (clients die at the same time)
+    yabe_compositor_terminate();
+    compositor_thread.join();
 
     StopChroot(tracer_pid);
     is_finished.store(true);
-    ptrace_thread.join();
+    andlify_thread.join();
     // OpenXR app should be destroyed before Graphic
     openxr_app.reset();
     graphic.reset();
