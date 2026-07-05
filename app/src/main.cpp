@@ -6,6 +6,7 @@
 #include <bits/wait.h>
 #include <fcntl.h>
 #include <linux/input-event-codes.h>
+#include <poll.h>
 #include <ptrace_engine.h>
 #include <rootfs_extractor.h>
 #include <sys/wait.h>
@@ -182,36 +183,80 @@ void android_main(android_app* app) {
         std::format("{}/rootfs", app->activity->internalDataPath);
       ensure_rootfs_extracted(app, extract_dst_path);
 
-      const auto stdout_tmp =
-        std::format("{}/stdout.txt", app->activity->internalDataPath);
-      const auto stderr_tmp =
-        std::format("{}/stderr.txt", app->activity->internalDataPath);
-      int fd_out = open(stdout_tmp.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
-      int fd_err = open(stderr_tmp.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
+      int pipe_out[2];
+      int pipe_err[2];
+      if (pipe(pipe_out) != 0 || pipe(pipe_err) != 0) {
+        LOG_ERROR("Failed to create pipes");
+        return 0;
+      }
 
       LOG_INFO("Starting chroot to {}", extract_dst_path);
-      auto res = StartChrootFunc(
-        extract_dst_path, andlify_entrypoint, STDIN_FILENO, fd_out, fd_err);
+      auto res = StartChrootFunc(extract_dst_path, andlify_entrypoint,
+        STDIN_FILENO, pipe_out[1], pipe_err[1]);
+
+      close(pipe_out[1]);
+      close(pipe_err[1]);
 
       if (res < 0) {
+        close(pipe_out[0]);
+        close(pipe_err[0]);
         return 0;
       }
       tracer_pid.store(res);
-      while (!is_finished.load()) {}
 
-      if (fd_out >= 0) {
-        close(fd_out);
-      }
-      if (fd_err >= 0) {
-        close(fd_err);
+      struct pollfd fds[2];
+      fds[0].fd     = pipe_out[0];
+      fds[0].events = POLLIN;
+      fds[1].fd     = pipe_err[0];
+      fds[1].events = POLLIN;
+
+      char        buffer[1024];
+      std::string out_buf;
+      std::string err_buf;
+
+      auto process_buffer = [](std::string& buf, const char* prefix) {
+        size_t pos;
+        while ((pos = buf.find('\n')) != std::string::npos) {
+          LOG_DEBUG("{} {}", prefix, buf.substr(0, pos));
+          buf.erase(0, pos + 1);
+        }
+      };
+
+      while (!is_finished.load()) {
+        int ret = poll(fds, 2, 100);
+        if (ret > 0) {
+          if (fds[0].revents & (POLLIN | POLLHUP)) {
+            ssize_t n = read(pipe_out[0], buffer, sizeof(buffer) - 1);
+            if (n > 0) {
+              buffer[n] = '\0';
+              out_buf += buffer;
+              process_buffer(out_buf, "[STDOUT]");
+            } else if (n == 0) {
+              fds[0].events = 0;
+              fds[0].fd     = -1;
+            }
+          }
+          if (fds[1].revents & (POLLIN | POLLHUP)) {
+            ssize_t n = read(pipe_err[0], buffer, sizeof(buffer) - 1);
+            if (n > 0) {
+              buffer[n] = '\0';
+              err_buf += buffer;
+              process_buffer(err_buf, "[STDERR]");
+            } else if (n == 0) {
+              fds[1].events = 0;
+              fds[1].fd     = -1;
+            }
+          }
+        }
       }
 
-      auto stderr_content = std::ifstream(
-        std::format("{}/stderr.txt", app->activity->internalDataPath));
-      auto stderr_str =
-        std::string((std::istreambuf_iterator<char>(stderr_content)),
-          std::istreambuf_iterator<char>());
-      LOG_DEBUG("[STDERR]\n==========\n{}\n==========", stderr_str);
+      if (!out_buf.empty())
+        LOG_DEBUG("[STDOUT] {}", out_buf);
+      if (!err_buf.empty())
+        LOG_DEBUG("[STDERR] {}", err_buf);
+
+      close(pipe_out[0]);
+      close(pipe_err[0]);
 
       return 0;
     });
