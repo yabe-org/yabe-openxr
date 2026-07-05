@@ -47,7 +47,7 @@ target_include_directories(${PROJECT_NAME}
   PRIVATE src
   SYSTEM PRIVATE
   ${ANDROID_NDK}/sources/android/native_app_glue
-  ${CMAKE_CURRENT_LIST_DIR}/../../yabe-compositor/core
+  ${CMAKE_CURRENT_LIST_DIR}/../../yabe-compositor
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
