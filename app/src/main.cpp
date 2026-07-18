@@ -359,18 +359,18 @@ void android_main(android_app* app) {
 
       return 0;
     });
-    std::thread       compositor_thread([app]() {
+    std::thread       compositor_thread([]() {
       const auto runtime_dir = std::format("{}/tmp", rootfs_path);
       setenv("XDG_RUNTIME_DIR", runtime_dir.c_str(), 1);
       setenv("WAYLAND_DISPLAY", "wayland-1", 1);
       setenv("WAYLAND_DEBUG", "1", 1);
       LOG_INFO("Starting YabeCompositor");
-      yabe_compositor_start(
-        [](const char* s) {
-          // use raw log function instead log macros to use different tag
-          __android_log_print(ANDROID_LOG_DEBUG, "YabeCompositor", "%s", s);
-        },
-        -1);
+      yabe_compositor_init([](const char* s) {
+        // use raw log function instead log macros to use different tag
+        __android_log_print(ANDROID_LOG_DEBUG, "YabeCompositor", "%s", s);
+      });
+      yabe_compositor_register_socket_fd(-1);
+      yabe_compositor_start();
       LOG_INFO("YabeCompositor finished");
     });
 

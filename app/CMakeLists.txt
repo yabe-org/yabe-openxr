@@ -75,13 +75,13 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 
 add_library(yabe-compositor STATIC IMPORTED)
 set_target_properties(yabe-compositor PROPERTIES
-  IMPORTED_LOCATION ${CMAKE_CURRENT_LIST_DIR}/../../yabe-compositor/android-build/libyabe_compositor.a)
+  IMPORTED_LOCATION ${CMAKE_CURRENT_LIST_DIR}/../../../yabe/compositor/android-build/libyabe_compositor.a)
 
 target_include_directories(${PROJECT_NAME}
   PRIVATE src
   SYSTEM PRIVATE
   ${ANDROID_NDK}/sources/android/native_app_glue
-  ${CMAKE_CURRENT_LIST_DIR}/../../yabe-compositor
+  ${CMAKE_CURRENT_LIST_DIR}/../../../yabe/compositor
 )
 
 add_dependencies(${PROJECT_NAME} xkbcommon_project)
