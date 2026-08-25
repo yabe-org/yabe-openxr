@@ -13,7 +13,8 @@
 
 namespace yabe_openxr {
 
-Graphic::Graphic() {
+Graphic::Graphic(const std::atomic_bool& compositor_ready)
+    : compositor_ready_(compositor_ready) {
   init_egl();
 }
 
@@ -106,6 +107,10 @@ void Graphic::draw(uint32_t color_texture, uint32_t depth_texture,
   glFramebufferTexture2D(
     GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth_texture, 0);
   glViewport(0, 0, width, height);
+  if (!this->compositor_ready_.load()) {
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    return;
+  }
   yabe_compositor_draw(glm::value_ptr(vp_mat));
 }
 }  // namespace yabe_openxr

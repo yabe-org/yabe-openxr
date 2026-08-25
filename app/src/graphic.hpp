@@ -12,6 +12,7 @@
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 
+#include <atomic>
 #include <glm/glm.hpp>
 #include <map>
 #include <vector>
@@ -19,7 +20,7 @@
 namespace yabe_openxr {
 class Graphic {
  public:
-  explicit Graphic();
+  explicit Graphic(const std::atomic_bool& compositor_ready);
   ~Graphic();
 
   [[nodiscard]] XrGraphicsBindingOpenGLESAndroidKHR get_graphics_binding()
@@ -52,5 +53,6 @@ class Graphic {
   };
   std::map<XrSwapchain, SwapchainInfo> swapchains_;
   uint32_t                             frame_buffer_ = 0;
+  const std::atomic_bool&              compositor_ready_;
 };
 }  // namespace yabe_openxr

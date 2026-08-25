@@ -15,6 +15,7 @@
       android:name="oculus.software.handtracking"
       android:required="false" />
   <uses-permission android:name="com.oculus.permission.HAND_TRACKING" />
+  <uses-permission android:name="android.permission.INTERNET" />
   <application
       android:allowBackup="false"
       android:label="@string/app_name"
