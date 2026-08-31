@@ -223,11 +223,9 @@ void OpenXrApp::render_layer(
     proj[2][2]            = -proj_far / (proj_far - proj_near);
     proj[3][2]            = -(proj_far * proj_near) / (proj_far - proj_near);
     proj[2][3]            = -1.F;
-    const auto vp_mat     = proj * view;
-
     graphic->draw(color_swapchain_info.image_views[color_image_index],
-      depth_swapchain_info.image_views[depth_image_index], width, height,
-      vp_mat);
+      depth_swapchain_info.image_views[depth_image_index], width, height, proj,
+      view);
 
     XrSwapchainImageReleaseInfo sri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
     ENSURE(xrReleaseSwapchainImage(color_swapchain_info.swapchain, &sri));

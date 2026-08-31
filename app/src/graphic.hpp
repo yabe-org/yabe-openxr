@@ -36,7 +36,7 @@ class Graphic {
   uint32_t get_swapchain_image(
     XrSwapchain swapchain, uint32_t index, SwapchainType type);
   void draw(uint32_t color_texture, uint32_t depth_texture, int32_t width,
-    int32_t height, const glm::mat4& vp_mat);
+    int32_t height, const glm::mat4& proj_mat, const glm::mat4& view_mat);
 
  private:
   void init_egl();

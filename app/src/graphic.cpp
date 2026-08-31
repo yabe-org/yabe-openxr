@@ -100,7 +100,8 @@ uint32_t Graphic::get_swapchain_image(
 }
 
 void Graphic::draw(uint32_t color_texture, uint32_t depth_texture,
-  int32_t width, int32_t height, const glm::mat4& vp_mat) {
+  int32_t width, int32_t height, const glm::mat4& proj_mat,
+  const glm::mat4& view_mat) {
   glBindFramebuffer(GL_FRAMEBUFFER, this->frame_buffer_);
   glFramebufferTexture2D(
     GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, color_texture, 0);
@@ -111,6 +112,6 @@ void Graphic::draw(uint32_t color_texture, uint32_t depth_texture,
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     return;
   }
-  yabe_compositor_draw(glm::value_ptr(vp_mat));
+  yabe_compositor_draw(glm::value_ptr(proj_mat), glm::value_ptr(view_mat));
 }
 }  // namespace yabe_openxr
