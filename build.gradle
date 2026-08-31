@@ -58,6 +58,11 @@ android {
   androidResources {
     noCompress += ['zst']
   }
+  lint {
+    // Andlify requires target SDK 28 or lower
+    // because newer Android versions restrict ptrace(), exec(), etc
+    disable 'ExpiredTargetSdkVersion'
+  }
 }
 
 dependencies {
