@@ -9,12 +9,15 @@
 #include <poll.h>
 #include <ptrace_engine.h>
 #include <rootfs_extractor.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <xkbcommon/xkbcommon.h>
 
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <format>
 #include <fstream>
 #include <memory>
 #include <stdexcept>
@@ -60,14 +63,24 @@ bool ensure_rootfs_extracted(
   return false;
 }
 
+void initialize_environment_variables() {
+  setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin", true);
+  setenv("XDG_RUNTIME_DIR", "/tmp", true);
+  setenv("WAYLAND_DISPLAY", "wayland-1", true);
+  setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/0/bus", true);
+}
 int andlify_entrypoint() {
   LOG_DEBUG("chroot started!");
-
-  setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin", 1);
-  setenv("XDG_RUNTIME_DIR", "/tmp", 1);
-  setenv("WAYLAND_DISPLAY", "wayland-1", 1);
-
-  LOG_DEBUG("weston-terminal thread start!");
+  initialize_environment_variables();
+  for (const auto& path : {"/run/dbus", "/run/user/0"}) {
+    try {
+      if (!std::filesystem::create_directories(path)) {
+        LOG_ERROR("Tried to create existing directory: {}s", path);
+      }
+    } catch (const std::filesystem::filesystem_error& e) {
+      LOG_ERROR("Failed to create {}: {}", path, e.what());
+    }
+  }
   while (true) {
     int child = fork();
     if (child < 0) {
@@ -77,20 +90,22 @@ int andlify_entrypoint() {
       chdir("/tmp");
       setenv("PWD", "/tmp", 1);
       setenv("PS1", R"(\u:\w\$ )", 1);
-      execl("/usr/bin/weston-terminal", "weston-terminal",
-        "--shell=/usr/bin/bash", nullptr);
+
+      execl("/usr/bin/sh", "sh", "-c",
+        "dbus-daemon --system  --fork &&"
+        "dbus-daemon --session --nofork --address=unix:path=/run/user/0/bus",
+        nullptr);
       std::exit(0);
     } else {
       LOG_DEBUG("child {} started", child);
       int status = 0;
       if (waitpid(child, &status, 0) < 0) {
         LOG_ERROR("wait(): {}", std::strerror(errno));
+        continue;
       }
       int exit_status = WEXITSTATUS(status);
-      LOG_INFO("weston-terminal ({}) finished with {}", child, exit_status);
-      if (exit_status != 255) {
-        break;
-      }
+      LOG_INFO("DBus process ({}) finished with {}", child, exit_status);
+      break;
     }
   }
   return 0;
@@ -222,6 +237,7 @@ int exec_in_andlify(const char* const * argv) {
   return StartChrootFunc(
     rootfs_path,
     [argv]() {
+      initialize_environment_variables();
       execvp(argv[0], const_cast<char* const *>(argv));
       return 126;
     },
@@ -235,17 +251,6 @@ void android_main(android_app* app) {
   app->activity->vm->AttachCurrentThread(&env, nullptr);
 
   rootfs_path = std::format("{}/rootfs", app->activity->internalDataPath);
-  {
-    // if socket file exists, remove it
-    const auto socket_path = std::format("{}/tmp/wayland-1", rootfs_path);
-    if (access(socket_path.c_str(), F_OK) == 0) {
-      unlink(socket_path.c_str());
-    }
-    const auto lock_path = socket_path + ".lock";
-    if (access(lock_path.c_str(), F_OK) == 0) {
-      unlink(lock_path.c_str());
-    }
-  }
 
   try {
     app->onInputEvent = handle_input_event;
@@ -265,6 +270,30 @@ void android_main(android_app* app) {
         if (!ensure_rootfs_extracted(app, rootfs_path)) {
           startup_failed.store(true);
           return;
+        }
+        // /run directory created by `filesystem` package in Arch Linux
+        // may creates it as 0555, so fix it
+        chmod(std::format("{}/run", rootfs_path).c_str(), 0755);
+        for (const auto* directory : {"run", "tmp"}) {
+          const auto      path = std::filesystem::path(rootfs_path) / directory;
+          std::error_code error;
+          const auto      status = std::filesystem::symlink_status(path, error);
+          if (error || !std::filesystem::is_directory(status)) {
+            LOG_ERROR("Invalid rootfs runtime directory {}: {}", path.string(),
+              error ? error.message() : "not a directory");
+            startup_failed.store(true);
+            return;
+          }
+          for (std::filesystem::directory_iterator entries(path, error), end;
+            !error && entries != end; entries.increment(error)) {
+            std::filesystem::remove_all(entries->path(), error);
+          }
+          if (error) {
+            LOG_ERROR("Failed to clear rootfs runtime directory {}: {}",
+              path.string(), error.message());
+            startup_failed.store(true);
+            return;
+          }
         }
         if (is_finished.load()) {
           return;
@@ -359,7 +388,6 @@ void android_main(android_app* app) {
           const auto runtime_dir = std::format("{}/tmp", rootfs_path);
           setenv("XDG_RUNTIME_DIR", runtime_dir.c_str(), 1);
           setenv("WAYLAND_DISPLAY", "wayland-1", 1);
-          setenv("WAYLAND_DEBUG", "1", 1);
           LOG_INFO("Starting YabeCompositor");
           yabe_compositor_init(
             [](const char* s) {
@@ -386,6 +414,7 @@ void android_main(android_app* app) {
         });
       });
 
+    LOG_INFO("main loop will begin");
     while (true) {
       process_android_events(app, openxr_app->is_session_running());
       if (app->destroyRequested != 0) {
