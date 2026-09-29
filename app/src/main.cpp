@@ -5,7 +5,9 @@
 #include <android_native_app_glue.h>
 #include <bits/wait.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <linux/input-event-codes.h>
+#include <ownership/ownership_store.h>
 #include <poll.h>
 #include <ptrace_engine.h>
 #include <rootfs_extractor.h>
@@ -19,6 +21,7 @@
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 #include <thread>
@@ -67,47 +70,79 @@ void initialize_environment_variables() {
   setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin", true);
   setenv("XDG_RUNTIME_DIR", "/tmp", true);
   setenv("WAYLAND_DISPLAY", "wayland-1", true);
-  setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/0/bus", true);
+  setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus", true);
 }
+constexpr uid_t kUserUid = 1000;
+constexpr gid_t kUserGid = 1000;
+
+/// returns exit status of the child, or -1 if it cannot be waited
+int run_child(const std::function<void()>& child_func) {
+  const int child = fork();
+  if (child < 0) {
+    LOG_ERROR("fork(): {}", std::strerror(errno));
+    return -1;
+  }
+  if (child == 0) {
+    chdir("/tmp");
+    setenv("PWD", "/tmp", 1);
+    child_func();
+    std::_Exit(126);
+  }
+  LOG_DEBUG("child {} started", child);
+  int status = 0;
+  while (waitpid(child, &status, 0) < 0) {
+    if (errno != EINTR) {
+      LOG_ERROR("wait(): {}", std::strerror(errno));
+      return -1;
+    }
+  }
+  if (!WIFEXITED(status)) {
+    LOG_ERROR("child {} terminated by signal {}", child, WTERMSIG(status));
+    return -1;
+  }
+  return WEXITSTATUS(status);
+}
+
+bool drop_to_user() {
+  const gid_t groups[] = {kUserGid};
+  if (setgroups(1, groups) != 0 || setgid(kUserGid) != 0 ||
+      setuid(kUserUid) != 0) {
+    LOG_ERROR("Failed to drop privileges: {}", std::strerror(errno));
+    return false;
+  }
+  setenv("HOME", "/home/user", 1);
+  setenv("USER", "user", 1);
+  setenv("LOGNAME", "user", 1);
+  return true;
+}
+
+/// executed as root, like an init process
 int andlify_entrypoint() {
   LOG_DEBUG("chroot started!");
   initialize_environment_variables();
-  for (const auto& path : {"/run/dbus", "/run/user/0"}) {
-    try {
-      if (!std::filesystem::create_directories(path)) {
-        LOG_ERROR("Tried to create existing directory: {}s", path);
-      }
-    } catch (const std::filesystem::filesystem_error& e) {
-      LOG_ERROR("Failed to create {}: {}", path, e.what());
-    }
+  std::error_code error;
+  std::filesystem::create_directories("/run/dbus", error);
+  if (error) {
+    LOG_ERROR("Failed to create /run/dbus: {}", error.message());
   }
-  while (true) {
-    int child = fork();
-    if (child < 0) {
-      LOG_ERROR("fork(): {}", std::strerror(errno));
-    }
-    if (child == 0) {
-      chdir("/tmp");
-      setenv("PWD", "/tmp", 1);
-      setenv("PS1", R"(\u:\w\$ )", 1);
 
-      execl("/usr/bin/sh", "sh", "-c",
-        "dbus-daemon --system  --fork &&"
-        "dbus-daemon --session --nofork --address=unix:path=/run/user/0/bus",
-        nullptr);
-      std::exit(0);
-    } else {
-      LOG_DEBUG("child {} started", child);
-      int status = 0;
-      if (waitpid(child, &status, 0) < 0) {
-        LOG_ERROR("wait(): {}", std::strerror(errno));
-        continue;
-      }
-      int exit_status = WEXITSTATUS(status);
-      LOG_INFO("DBus process ({}) finished with {}", child, exit_status);
-      break;
+  // system bus drops its privileges by itself according to system.conf.
+  // /run persists unlike tmpfs, so a pid file would remain after the app exits
+  const int system_bus_status = run_child([]() {
+    execl("/usr/bin/dbus-daemon", "dbus-daemon", "--system", "--fork",
+      "--nopidfile", nullptr);
+  });
+  LOG_INFO("DBus system bus launcher finished with {}", system_bus_status);
+
+  const int session_bus_status = run_child([]() {
+    if (!drop_to_user()) {
+      return;
     }
-  }
+    setenv("PS1", R"(\u:\w\$ )", 1);
+    execl("/usr/bin/dbus-daemon", "dbus-daemon", "--session", "--nofork",
+      "--address=unix:path=/run/user/1000/bus", nullptr);
+  });
+  LOG_INFO("DBus session bus finished with {}", session_bus_status);
   return 0;
 }
 
@@ -319,7 +354,7 @@ void android_main(android_app* app) {
 
           LOG_INFO("Starting chroot to {}", rootfs_path);
           auto res = StartChrootFunc(rootfs_path, andlify_entrypoint,
-            STDIN_FILENO, pipe_out[1], pipe_err[1]);
+            STDIN_FILENO, pipe_out[1], pipe_err[1], 0, 0);
 
           close(pipe_out[1]);
           close(pipe_err[1]);
@@ -409,7 +444,18 @@ void android_main(android_app* app) {
           const std::string config_contents(
             std::istreambuf_iterator<char>(config), {});
           yabe_compositor_load_config(config_contents.c_str());
-          yabe_compositor_register_socket_fd(-1);
+          const auto display_id = yabe_compositor_register_socket_fd(-1);
+          andlify::OwnershipStore ownership;
+          const auto              socket_path =
+            std::format("{}/wayland-{}", runtime_dir, display_id);
+          // Host-created sockets otherwise inherit virtual root ownership.
+          if (!ownership.Open(rootfs_path, true) ||
+              !ownership.SetPath(socket_path, 1000, 1000, 0600)) {
+            LOG_ERROR("Failed to assign Wayland socket ownership: {}",
+              std::strerror(errno));
+            startup_failed.store(true);
+            return;
+          }
           compositor_ready.store(true);
           yabe_compositor_start();
           compositor_ready.store(false);
