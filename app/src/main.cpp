@@ -167,6 +167,9 @@ int32_t handle_keyboard_input(AInputEvent* event) {
     return 0;
   }
   const bool is_pressed = (action == AKEY_EVENT_ACTION_DOWN);
+  if (is_pressed && AKeyEvent_getRepeatCount(event) > 0) {
+    return 1;
+  }
   yabe_compositor_key(key, is_pressed);
   return 1;
 }
