@@ -155,6 +155,11 @@ void OpenXrApp::render_layer(
   if (result != XR_SUCCESS) {
     return;
   }
+  // runtimes may report no valid orientation (e.g. before tracking starts),
+  // and submitting such pose makes xrEndFrame() fail
+  if ((view_state.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) == 0) {
+    return;
+  }
   layer_info.layer_projection_views.resize(view_count);
 
   for (uint32_t i = 0; i < view_count; i++) {
@@ -259,12 +264,15 @@ void OpenXrApp::init_instance(android_app* app) {
     .applicationVersion = 1,
     .engineName         = "YabeOpenXR",
     .engineVersion      = 1,
-    .apiVersion         = XR_CURRENT_API_VERSION,
+    .apiVersion         = XR_API_VERSION_1_1,
   };
   std::strncpy(ai.applicationName, "YabeOpenXR", XR_MAX_APPLICATION_NAME_SIZE);
 
   const std::vector<const char*> required_extensions = {
+    XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME,
     XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME,
+  };
+  const std::vector<const char*> optional_extensions = {
     XR_EXT_DEBUG_UTILS_EXTENSION_NAME,
   };
 
@@ -275,25 +283,41 @@ void OpenXrApp::init_instance(android_app* app) {
     extension_count, {XR_TYPE_EXTENSION_PROPERTIES});
   ENSURE(xrEnumerateInstanceExtensionProperties(
     nullptr, extension_count, &extension_count, available_extensions.data()));
+  const auto find_extension = [&available_extensions](const char* name) {
+    return std::find_if(available_extensions.begin(),
+      available_extensions.end(), [name](const XrExtensionProperties& e) {
+        return strcmp(e.extensionName, name) == 0;
+      });
+  };
 
   std::vector<const char*> extensions;
   for (const auto& required_extension : required_extensions) {
-    auto it =
-      std::find_if(available_extensions.begin(), available_extensions.end(),
-        [&required_extension](const XrExtensionProperties& e) {
-          return strcmp(e.extensionName, required_extension) == 0;
-        });
+    auto it = find_extension(required_extension);
     if (it == available_extensions.end()) {
-      throw std::runtime_error(
-        std::format("OpenXR instance extension '{}' is not supported: ",
-          required_extension));
+      throw std::runtime_error(std::format(
+        "OpenXR instance extension '{}' is not supported", required_extension));
+    }
+    extensions.push_back(it->extensionName);
+  }
+  for (const auto& optional_extension : optional_extensions) {
+    auto it = find_extension(optional_extension);
+    if (it == available_extensions.end()) {
+      LOG_INFO("Optional OpenXR instance extension '{}' is not supported",
+        optional_extension);
+      continue;
     }
     extensions.push_back(it->extensionName);
   }
 
+  XrInstanceCreateInfoAndroidKHR icia{
+    .type                = XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR,
+    .next                = nullptr,
+    .applicationVM       = app->activity->vm,
+    .applicationActivity = app->activity->clazz,
+  };
   XrInstanceCreateInfo ici{
     .type                  = XR_TYPE_INSTANCE_CREATE_INFO,
-    .next                  = nullptr,
+    .next                  = &icia,
     .createFlags           = 0,
     .applicationInfo       = ai,
     .enabledApiLayerCount  = 0,
@@ -301,7 +325,21 @@ void OpenXrApp::init_instance(android_app* app) {
     .enabledExtensionCount = static_cast<uint32_t>(extensions.size()),
     .enabledExtensionNames = extensions.data(),
   };
-  ENSURE(xrCreateInstance(&ici, &this->instance_));
+  auto result = xrCreateInstance(&ici, &this->instance_);
+  if (result == XR_ERROR_API_VERSION_UNSUPPORTED) {
+    // this app uses no OpenXR 1.1 feature, so 1.0 runtimes are also usable
+    LOG_INFO("OpenXR 1.1 is not supported by the runtime; retrying with 1.0");
+    ici.applicationInfo.apiVersion = XR_API_VERSION_1_0;
+    result                         = xrCreateInstance(&ici, &this->instance_);
+  }
+  ENSURE(result);
+
+  XrInstanceProperties instance_properties{XR_TYPE_INSTANCE_PROPERTIES};
+  ENSURE(xrGetInstanceProperties(this->instance_, &instance_properties));
+  LOG_INFO("OpenXR runtime: {} {}.{}.{}", instance_properties.runtimeName,
+    XR_VERSION_MAJOR(instance_properties.runtimeVersion),
+    XR_VERSION_MINOR(instance_properties.runtimeVersion),
+    XR_VERSION_PATCH(instance_properties.runtimeVersion));
 
   XrSystemGetInfo sgi{
     .type       = XR_TYPE_SYSTEM_GET_INFO,
@@ -356,8 +394,11 @@ void OpenXrApp::init_formats() {
   }
   this->color_format_                                  = *it;
   // select depth format
-  const std::array<uint64_t, 2> expected_depth_formats = {
+  const std::array<uint64_t, 5> expected_depth_formats = {
     GL_DEPTH_COMPONENT24,
+    GL_DEPTH24_STENCIL8,
+    GL_DEPTH_COMPONENT32F,
+    GL_DEPTH32F_STENCIL8,
     GL_DEPTH_COMPONENT16,
   };
   it = std::find_first_of(swapchain_fmts.begin(), swapchain_fmts.end(),
@@ -409,7 +450,8 @@ void OpenXrApp::init_views(std::unique_ptr<Graphic>& graphic) {
       .usageFlags  = XR_SWAPCHAIN_USAGE_SAMPLED_BIT |
                      XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT,
       .format      = this->color_format_,
-      .sampleCount = config_view.recommendedSwapchainSampleCount,
+      // Graphic attaches swapchain images as GL_TEXTURE_2D
+      .sampleCount = 1,
       .width       = config_view.recommendedImageRectWidth,
       .height      = config_view.recommendedImageRectHeight,
       .faceCount   = 1,

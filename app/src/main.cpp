@@ -221,10 +221,28 @@ int32_t handle_input_event(android_app* /*app*/, AInputEvent* event) {
   return 0;
 }
 
+bool is_app_resumed = false;
+void handle_app_cmd(android_app* /*app*/, int32_t cmd) {
+  switch (cmd) {
+    case APP_CMD_RESUME:
+      is_app_resumed = true;
+      break;
+    case APP_CMD_PAUSE:
+      is_app_resumed = false;
+      break;
+    default:
+      break;
+  }
+}
+
 void process_android_events(android_app* app, bool is_session_running) {
-  android_poll_source* src     = nullptr;
-  int                  events  = 0;
-  int                  timeout = is_session_running ? 0 : -1;
+  android_poll_source* src    = nullptr;
+  int                  events = 0;
+  // OpenXR events (e.g. session state change to READY) may arrive without
+  // Android events, so block only while the app is not visible
+  int                  timeout =
+    (is_session_running || is_app_resumed || app->destroyRequested != 0) ? 0 :
+                                                                           -1;
   while (ALooper_pollOnce(
            timeout, nullptr, &events, reinterpret_cast<void**>(&src)) >= 0) {
     if (src) {
@@ -291,6 +309,7 @@ void android_main(android_app* app) {
   rootfs_path = std::format("{}/rootfs", app->activity->internalDataPath);
 
   try {
+    app->onAppCmd     = handle_app_cmd;
     app->onInputEvent = handle_input_event;
     capture_pointer(app);
 
