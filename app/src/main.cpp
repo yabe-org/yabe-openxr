@@ -70,9 +70,10 @@ void android_main(android_app* app) {
     std::atomic<int>  tracer_pid(-1);
     std::thread       andlify_thread;
     std::thread       compositor_thread;
+    std::thread       config_watcher_thread;
     std::thread       initialization_thread(
-      [app, &andlify_thread, &compositor_thread, &is_finished, &startup_failed,
-        &tracer_pid, &compositor_ready]() {
+      [app, &andlify_thread, &compositor_thread, &config_watcher_thread,
+        &is_finished, &startup_failed, &tracer_pid, &compositor_ready]() {
         if (!yabe_openxr::prepare_rootfs(app)) {
           startup_failed.store(true);
           return;
@@ -94,6 +95,10 @@ void android_main(android_app* app) {
         compositor_thread = std::thread([&compositor_ready, &startup_failed]() {
           yabe_openxr::run_compositor(compositor_ready, startup_failed);
         });
+        config_watcher_thread =
+          std::thread([&compositor_ready, &is_finished]() {
+            yabe_openxr::watch_config(compositor_ready, is_finished);
+          });
       });
 
     LOG_INFO("main loop will begin");
@@ -115,6 +120,10 @@ void android_main(android_app* app) {
 
     is_finished.store(true);
     initialization_thread.join();
+    // stop reloading config before terminating the compositor
+    if (config_watcher_thread.joinable()) {
+      config_watcher_thread.join();
+    }
     if (compositor_thread.joinable()) {
       // Clients must stop before the chroot environment that owns them.
       compositor_ready.store(false);
