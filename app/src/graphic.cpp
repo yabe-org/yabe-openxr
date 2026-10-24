@@ -108,8 +108,9 @@ void Graphic::draw(uint32_t color_texture, uint32_t depth_texture,
   glFramebufferTexture2D(
     GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth_texture, 0);
   glViewport(0, 0, width, height);
+  glClearColor(0.F, 0.F, 0.F, 0.F);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
   if (!this->compositor_ready_.load()) {
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     return;
   }
   yabe_compositor_draw(glm::value_ptr(proj_mat), glm::value_ptr(view_mat));
