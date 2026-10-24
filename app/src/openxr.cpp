@@ -44,10 +44,27 @@ OpenXrApp::OpenXrApp(android_app* app, std::unique_ptr<Graphic>& graphic) {
   this->init_session(graphic);
   this->init_formats();
   this->init_views(graphic);
+  this->init_environment_blend_mode();
 }
 
 OpenXrApp::~OpenXrApp() {
   LOG_INFO("Destroying OpenXrApp");
+  if (this->passthrough_layer_ != XR_NULL_HANDLE) {
+    PFN_xrDestroyPassthroughLayerFB destroy_passthrough_layer = nullptr;
+    if (XR_SUCCEEDED(xrGetInstanceProcAddr(this->instance_,
+          "xrDestroyPassthroughLayerFB",
+          reinterpret_cast<PFN_xrVoidFunction*>(&destroy_passthrough_layer)))) {
+      destroy_passthrough_layer(this->passthrough_layer_);
+    }
+  }
+  if (this->passthrough_ != XR_NULL_HANDLE) {
+    PFN_xrDestroyPassthroughFB destroy_passthrough = nullptr;
+    if (XR_SUCCEEDED(
+          xrGetInstanceProcAddr(this->instance_, "xrDestroyPassthroughFB",
+            reinterpret_cast<PFN_xrVoidFunction*>(&destroy_passthrough)))) {
+      destroy_passthrough(this->passthrough_);
+    }
+  }
   if (this->session_ != XR_NULL_HANDLE) {
     xrDestroySession(this->session_);
   }
@@ -131,7 +148,7 @@ void OpenXrApp::render(std::unique_ptr<Graphic>& graphic) {
     .type                 = XR_TYPE_FRAME_END_INFO,
     .next                 = nullptr,
     .displayTime          = frame_state.predictedDisplayTime,
-    .environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE,
+    .environmentBlendMode = this->environment_blend_mode_,
     .layerCount           = static_cast<uint32_t>(layer_info.layers.size()),
     .layers = reinterpret_cast<const XrCompositionLayerBaseHeader* const *>(
       layer_info.layers.data()),
@@ -237,14 +254,31 @@ void OpenXrApp::render_layer(
     ENSURE(xrReleaseSwapchainImage(depth_swapchain_info.swapchain, &sri));
   }
 
+  if (this->passthrough_layer_ != XR_NULL_HANDLE) {
+    layer_info.layer_passthrough = {
+      .type        = XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB,
+      .next        = nullptr,
+      .flags       = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT,
+      .space       = XR_NULL_HANDLE,
+      .layerHandle = this->passthrough_layer_,
+    };
+    layer_info.layers.emplace_back(
+      reinterpret_cast<XrCompositionLayerBaseHeader*>(
+        &layer_info.layer_passthrough));
+  }
+  // the compositor renders with premultiplied alpha and Graphic clears with
+  // transparent black, so the environment (passthrough) is visible behind it
   layer_info.layer_projection = {
-    .type      = XR_TYPE_COMPOSITION_LAYER_PROJECTION,
-    .next      = nullptr,
-    .space     = this->local_space_,
-    .viewCount = view_count,
-    .views     = layer_info.layer_projection_views.data(),
+    .type       = XR_TYPE_COMPOSITION_LAYER_PROJECTION,
+    .next       = nullptr,
+    .layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT,
+    .space      = this->local_space_,
+    .viewCount  = view_count,
+    .views      = layer_info.layer_projection_views.data(),
   };
-  layer_info.layers.emplace_back(&layer_info.layer_projection);
+  layer_info.layers.emplace_back(
+    reinterpret_cast<XrCompositionLayerBaseHeader*>(
+      &layer_info.layer_projection));
 }
 
 void OpenXrApp::init_instance(android_app* app) {
@@ -274,6 +308,7 @@ void OpenXrApp::init_instance(android_app* app) {
   };
   const std::vector<const char*> optional_extensions = {
     XR_EXT_DEBUG_UTILS_EXTENSION_NAME,
+    XR_FB_PASSTHROUGH_EXTENSION_NAME,
   };
 
   uint32_t extension_count = 0;
@@ -307,6 +342,9 @@ void OpenXrApp::init_instance(android_app* app) {
       continue;
     }
     extensions.push_back(it->extensionName);
+    if (strcmp(optional_extension, XR_FB_PASSTHROUGH_EXTENSION_NAME) == 0) {
+      this->is_fb_passthrough_enabled_ = true;
+    }
   }
 
   XrInstanceCreateInfoAndroidKHR icia{
@@ -516,5 +554,98 @@ void OpenXrApp::init_views(std::unique_ptr<Graphic>& graphic) {
       },
   };
   ENSURE(xrCreateReferenceSpace(this->session_, &rsci, &this->local_space_));
+}
+
+void OpenXrApp::init_environment_blend_mode() {
+  uint32_t blend_mode_count = 0;
+  ENSURE(xrEnumerateEnvironmentBlendModes(this->instance_, this->system_id_,
+    this->view_config_type_, 0, &blend_mode_count, nullptr));
+  std::vector<XrEnvironmentBlendMode> blend_modes(blend_mode_count);
+  ENSURE(xrEnumerateEnvironmentBlendModes(this->instance_, this->system_id_,
+    this->view_config_type_, blend_mode_count, &blend_mode_count,
+    blend_modes.data()));
+  const auto is_supported = [&blend_modes](XrEnvironmentBlendMode mode) {
+    return std::find(blend_modes.begin(), blend_modes.end(), mode) !=
+           blend_modes.end();
+  };
+
+  // prefer the core blend modes that show the real environment
+  // (video see-through or optical see-through)
+  for (const auto mode : {XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND,
+         XR_ENVIRONMENT_BLEND_MODE_ADDITIVE}) {
+    if (is_supported(mode)) {
+      this->environment_blend_mode_ = mode;
+      LOG_INFO("Using environment blend mode {}", static_cast<int32_t>(mode));
+      return;
+    }
+  }
+  if (this->init_fb_passthrough()) {
+    LOG_INFO("Using XR_FB_passthrough for the background");
+  } else {
+    LOG_INFO("Passthrough is not available; the background will be opaque");
+  }
+  if (!blend_modes.empty() && !is_supported(this->environment_blend_mode_)) {
+    this->environment_blend_mode_ = blend_modes.front();
+  }
+}
+
+bool OpenXrApp::init_fb_passthrough() {
+  if (!this->is_fb_passthrough_enabled_) {
+    return false;
+  }
+
+  XrSystemPassthroughProperties2FB passthrough_properties{
+    .type         = XR_TYPE_SYSTEM_PASSTHROUGH_PROPERTIES2_FB,
+    .next         = nullptr,
+    .capabilities = 0,
+  };
+  XrSystemProperties system_properties{
+    .type = XR_TYPE_SYSTEM_PROPERTIES,
+    .next = &passthrough_properties,
+  };
+  ENSURE(xrGetSystemProperties(
+    this->instance_, this->system_id_, &system_properties));
+  if ((passthrough_properties.capabilities &
+        XR_PASSTHROUGH_CAPABILITY_BIT_FB) == 0) {
+    LOG_INFO("XR_FB_passthrough is enabled but the system does not support it");
+    return false;
+  }
+
+  PFN_xrCreatePassthroughFB      create_passthrough       = nullptr;
+  PFN_xrCreatePassthroughLayerFB create_passthrough_layer = nullptr;
+  ENSURE(xrGetInstanceProcAddr(this->instance_, "xrCreatePassthroughFB",
+    reinterpret_cast<PFN_xrVoidFunction*>(&create_passthrough)));
+  ENSURE(xrGetInstanceProcAddr(this->instance_, "xrCreatePassthroughLayerFB",
+    reinterpret_cast<PFN_xrVoidFunction*>(&create_passthrough_layer)));
+
+  // passthrough is optional, so failures here fall back to opaque background
+  const XrPassthroughCreateInfoFB pci{
+    .type  = XR_TYPE_PASSTHROUGH_CREATE_INFO_FB,
+    .next  = nullptr,
+    .flags = XR_PASSTHROUGH_IS_RUNNING_AT_CREATION_BIT_FB,
+  };
+  auto result = create_passthrough(this->session_, &pci, &this->passthrough_);
+  if (XR_FAILED(result)) {
+    LOG_WARN("xrCreatePassthroughFB failed: {}", static_cast<int32_t>(result));
+    this->passthrough_ = XR_NULL_HANDLE;
+    return false;
+  }
+
+  const XrPassthroughLayerCreateInfoFB plci{
+    .type        = XR_TYPE_PASSTHROUGH_LAYER_CREATE_INFO_FB,
+    .next        = nullptr,
+    .passthrough = this->passthrough_,
+    .flags       = XR_PASSTHROUGH_IS_RUNNING_AT_CREATION_BIT_FB,
+    .purpose     = XR_PASSTHROUGH_LAYER_PURPOSE_RECONSTRUCTION_FB,
+  };
+  result =
+    create_passthrough_layer(this->session_, &plci, &this->passthrough_layer_);
+  if (XR_FAILED(result)) {
+    LOG_WARN(
+      "xrCreatePassthroughLayerFB failed: {}", static_cast<int32_t>(result));
+    this->passthrough_layer_ = XR_NULL_HANDLE;
+    return false;
+  }
+  return true;
 }
 }  // namespace yabe_openxr

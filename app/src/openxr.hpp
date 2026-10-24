@@ -27,14 +27,19 @@ class OpenXrApp {
   void init_formats();
   void init_views(std::unique_ptr<Graphic>& graphic);
   void init_buffers(std::unique_ptr<Graphic>& graphic);
+  void init_environment_blend_mode();
+  /// @return false if the passthrough cannot be started
+  bool init_fb_passthrough();
 
   void handle_session_state_changed(
     const XrEventDataSessionStateChanged& event);
 
   struct RenderLayerInfo {
     XrTime                                     predicted_display_time;
-    std::vector<XrCompositionLayerProjection*> layers;
-    XrCompositionLayerProjection               layer_projection{
+    std::vector<XrCompositionLayerBaseHeader*> layers;
+    XrCompositionLayerPassthroughFB            layer_passthrough{
+      XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB};
+    XrCompositionLayerProjection layer_projection{
       XR_TYPE_COMPOSITION_LAYER_PROJECTION};
     std::vector<XrCompositionLayerProjectionView> layer_projection_views;
   };
@@ -64,5 +69,11 @@ class OpenXrApp {
   std::vector<SwapchainInfo> depth_swapchains_;
 
   XrSpace local_space_;
+
+  XrEnvironmentBlendMode environment_blend_mode_ =
+    XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+  bool                 is_fb_passthrough_enabled_ = false;
+  XrPassthroughFB      passthrough_               = XR_NULL_HANDLE;
+  XrPassthroughLayerFB passthrough_layer_         = XR_NULL_HANDLE;
 };
 }  // namespace yabe_openxr
