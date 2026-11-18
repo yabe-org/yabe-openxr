@@ -62,8 +62,9 @@ void android_main(android_app* app) {
     yabe_openxr::init_input(app, compositor_ready);
     capture_pointer(app);
 
-    auto graphic    = std::make_unique<yabe_openxr::Graphic>(compositor_ready);
-    auto openxr_app = std::make_unique<yabe_openxr::OpenXrApp>(app, graphic);
+    auto graphic = std::make_unique<yabe_openxr::Graphic>(compositor_ready);
+    auto openxr_app =
+      std::make_unique<yabe_openxr::OpenXrApp>(app, graphic, compositor_ready);
 
     std::atomic<bool> is_finished(false);
     std::atomic<bool> startup_failed(false);
