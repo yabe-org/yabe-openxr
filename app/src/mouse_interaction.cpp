@@ -225,7 +225,8 @@ void MouseInteraction::update_aim(XrTime time, XrSpace base_space) {
     }
     const auto d_polar = angle.polar - this->prev_aim_angle_->polar;
     if (d_azimuth != 0.F || d_polar != 0.F) {
-      yabe_compositor_move_pointer(d_azimuth, d_polar);
+      yabe_compositor_move_pointer(d_azimuth / YABE_COMPOSITOR_RADIAN_PER_PIXEL,
+        d_polar / YABE_COMPOSITOR_RADIAN_PER_PIXEL);
     }
   }
   this->prev_aim_angle_ = angle;

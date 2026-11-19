@@ -44,8 +44,7 @@ int32_t handle_mouse_input(AInputEvent* event) {
         AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_RELATIVE_X, 0);
       const auto dy =
         AMotionEvent_getAxisValue(event, AMOTION_EVENT_AXIS_RELATIVE_Y, 0);
-      constexpr float kScale = 0.002F;
-      yabe_compositor_move_pointer(dx * kScale, -dy * kScale);
+      yabe_compositor_move_pointer(dx, -dy);
       return 1;
     }
     default:
