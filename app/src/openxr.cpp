@@ -39,21 +39,15 @@ inline void _ensure(
 }  // namespace
 
 namespace yabe_openxr {
-OpenXrApp::OpenXrApp(android_app* app, std::unique_ptr<Graphic>& graphic,
-  const std::atomic_bool& compositor_ready) {
+OpenXrApp::OpenXrApp(android_app* app, std::unique_ptr<Graphic>& graphic) {
   this->init_instance(app);
   this->init_session(graphic);
   this->init_formats();
   this->init_views(graphic);
-  if (this->is_mouse_interaction_supported_) {
-    this->mouse_interaction_ = std::make_unique<MouseInteraction>(
-      this->instance_, this->session_, compositor_ready);
-  }
 }
 
 OpenXrApp::~OpenXrApp() {
   LOG_INFO("Destroying OpenXrApp");
-  this->mouse_interaction_.reset();
   if (this->session_ != XR_NULL_HANDLE) {
     xrDestroySession(this->session_);
   }
@@ -123,10 +117,6 @@ void OpenXrApp::render(std::unique_ptr<Graphic>& graphic) {
   XrFrameState    frame_state{XR_TYPE_FRAME_STATE};
   XrFrameWaitInfo fwi{XR_TYPE_FRAME_WAIT_INFO};
   ENSURE(xrWaitFrame(this->session_, &fwi, &frame_state));
-  if (this->mouse_interaction_) {
-    this->mouse_interaction_->update(
-      frame_state.predictedDisplayTime, this->local_space_);
-  }
   XrFrameBeginInfo fbi{XR_TYPE_FRAME_BEGIN_INFO};
   ENSURE(xrBeginFrame(this->session_, &fbi));
 
@@ -284,7 +274,6 @@ void OpenXrApp::init_instance(android_app* app) {
   };
   const std::vector<const char*> optional_extensions = {
     XR_EXT_DEBUG_UTILS_EXTENSION_NAME,
-    MouseInteraction::kExtensionName,
   };
 
   uint32_t extension_count = 0;
@@ -318,9 +307,6 @@ void OpenXrApp::init_instance(android_app* app) {
       continue;
     }
     extensions.push_back(it->extensionName);
-    if (strcmp(optional_extension, MouseInteraction::kExtensionName) == 0) {
-      this->is_mouse_interaction_supported_ = true;
-    }
   }
 
   XrInstanceCreateInfoAndroidKHR icia{

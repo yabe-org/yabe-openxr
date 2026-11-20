@@ -19,8 +19,12 @@
 
 namespace {
 bool is_app_resumed = false;
-void handle_app_cmd(android_app* /*app*/, int32_t cmd) {
+void handle_app_cmd(android_app* app, int32_t cmd) {
   switch (cmd) {
+    // pointer capture is ignored while the window does not have focus
+    case APP_CMD_GAINED_FOCUS:
+      capture_pointer(app);
+      break;
     case APP_CMD_RESUME:
       is_app_resumed = true;
       break;
@@ -62,9 +66,8 @@ void android_main(android_app* app) {
     yabe_openxr::init_input(app, compositor_ready);
     capture_pointer(app);
 
-    auto graphic = std::make_unique<yabe_openxr::Graphic>(compositor_ready);
-    auto openxr_app =
-      std::make_unique<yabe_openxr::OpenXrApp>(app, graphic, compositor_ready);
+    auto graphic    = std::make_unique<yabe_openxr::Graphic>(compositor_ready);
+    auto openxr_app = std::make_unique<yabe_openxr::OpenXrApp>(app, graphic);
 
     std::atomic<bool> is_finished(false);
     std::atomic<bool> startup_failed(false);
@@ -105,6 +108,7 @@ void android_main(android_app* app) {
     LOG_INFO("main loop will begin");
     while (true) {
       process_android_events(app, openxr_app->is_session_running());
+      yabe_openxr::update_input();
       if (app->destroyRequested != 0) {
         LOG_INFO("Android app destroy requested");
         break;

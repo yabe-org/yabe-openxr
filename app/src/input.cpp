@@ -3,10 +3,14 @@
 #include <android/input.h>
 #include <linux/input-event-codes.h>
 
+#include <chrono>
+
+#include "touchpad.hpp"
 #include "yabe-compositor.h"
 
 namespace yabe_openxr {
 namespace {
+android_app*            app_              = nullptr;  // NOLINT
 const std::atomic_bool* compositor_ready_ = nullptr;  // NOLINT
 
 int32_t send_mouse_button_event(int32_t button, bool is_pressed) {
@@ -76,7 +80,14 @@ int32_t handle_input_event(android_app* /*app*/, AInputEvent* event) {
     return 0;
   }
   if (AInputEvent_getType(event) == AINPUT_EVENT_TYPE_MOTION) {
-    handle_mouse_input(event);
+    // a touchpad reports raw touches only while the pointer is captured;
+    // otherwise its input arrives as a mouse
+    if ((AInputEvent_getSource(event) & AINPUT_SOURCE_TOUCHPAD) ==
+        AINPUT_SOURCE_TOUCHPAD) {
+      handle_touchpad_input(event);
+    } else {
+      handle_mouse_input(event);
+    }
   } else if (AInputEvent_getType(event) == AINPUT_EVENT_TYPE_KEY) {
     handle_keyboard_input(event);
   }
@@ -85,7 +96,19 @@ int32_t handle_input_event(android_app* /*app*/, AInputEvent* event) {
 }  // namespace
 
 void init_input(android_app* app, const std::atomic_bool& compositor_ready) {
+  app_              = app;
   compositor_ready_ = &compositor_ready;
   app->onInputEvent = handle_input_event;
+}
+
+void update_input() {
+  static auto prev_time = std::chrono::steady_clock::now();
+  const auto  now       = std::chrono::steady_clock::now();
+  const auto  delta_sec = std::chrono::duration<float>(now - prev_time).count();
+  prev_time             = now;
+  if (!compositor_ready_ || !compositor_ready_->load()) {
+    return;
+  }
+  update_touchpad(app_, delta_sec);
 }
 }  // namespace yabe_openxr

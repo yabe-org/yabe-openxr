@@ -3,18 +3,15 @@
 #include <android_native_app_glue.h>
 #include <openxr/openxr.h>
 
-#include <atomic>
 #include <memory>
 #include <vector>
 
 #include "graphic.hpp"
-#include "mouse_interaction.hpp"
 
 namespace yabe_openxr {
 class OpenXrApp {
  public:
-  OpenXrApp(android_app* app, std::unique_ptr<Graphic>& graphic,
-    const std::atomic_bool& compositor_ready);
+  OpenXrApp(android_app* app, std::unique_ptr<Graphic>& graphic);
   ~OpenXrApp();
 
   /// @return false if the app is exited
@@ -67,9 +64,5 @@ class OpenXrApp {
   std::vector<SwapchainInfo> depth_swapchains_;
 
   XrSpace local_space_;
-
-  bool                              is_mouse_interaction_supported_ = false;
-  /// nullptr if XR_ANDROID_mouse_interaction is not supported
-  std::unique_ptr<MouseInteraction> mouse_interaction_;
 };
 }  // namespace yabe_openxr
