@@ -5,7 +5,7 @@
 namespace yabe_openxr {
 /// accumulate a touchpad event; a touchpad reports raw touches only while the
 /// pointer is captured
-void handle_touchpad_input(AInputEvent* event);
+void handle_touchpad_input(android_app* app, AInputEvent* event);
 /// interpret accumulated touchpad events as gestures (tap, long tap, drag and
 /// two-finger scroll) and forward them to the compositor;
 /// must be called every frame from the thread processing input events
