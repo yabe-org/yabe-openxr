@@ -1,11 +1,13 @@
 #include "touchpad.hpp"
 
+#include <jni.h>
 #include <linux/input-event-codes.h>
 
 #include <chrono>
 #include <vector>
 
 #include "haptic.hpp"
+#include "log.hpp"
 #include "yabe-compositor.h"
 
 namespace yabe_openxr {
@@ -19,6 +21,9 @@ struct TouchFrame {
   int32_t primary_id    = -1;
   float   last_x        = 0.F;
   float   last_y        = 0.F;
+  // position of the primary pointer when the touch began
+  float   start_x       = 0.F;
+  float   start_y       = 0.F;
   // accumulated since the last update_touchpad()
   float   delta_x       = 0.F;
   float   delta_y       = 0.F;
@@ -33,9 +38,100 @@ void set_primary_pointer(AInputEvent* event, size_t index) {
   touch_frame.last_y     = AMotionEvent_getY(event, index);
 }
 
+// A finger moves slightly even while tapping, and how much it moves in
+// touchpad units depends on the touchpad's resolution, so a touch is regarded
+// as a tap while it stays within kTapSlopMm from where it began.
+// The same value as "Tap Move Distance" of Android's touchpad gesture library
+constexpr float kTapSlopMm                 = 2.F;
+// used if the touchpad does not report its resolution
+constexpr float kFallbackTapSlopRangeRatio = 0.03F;
+
+struct TapSlop {
+  int32_t device_id = -1;
+  // in touchpad units
+  float   x         = 0.F;
+  float   y         = 0.F;
+};
+TapSlop tap_slop;  // NOLINT
+
+/// returns the tap slop along the axis in touchpad units, or 0 on failure
+float query_tap_slop(JNIEnv* env, jobject device, jint axis) {
+  jclass    device_class            = env->GetObjectClass(device);
+  jmethodID get_motion_range_method = env->GetMethodID(device_class,
+    "getMotionRange", "(II)Landroid/view/InputDevice$MotionRange;");
+  jobject   range                   = env->CallObjectMethod(
+    device, get_motion_range_method, axis, AINPUT_SOURCE_TOUCHPAD);
+  if (env->ExceptionCheck() || !range) {
+    env->ExceptionClear();
+    return 0.F;
+  }
+  jclass    range_class = env->GetObjectClass(range);
+  jmethodID get_resolution_method =
+    env->GetMethodID(range_class, "getResolution", "()F");
+  jmethodID get_range_method = env->GetMethodID(range_class, "getRange", "()F");
+  // units per mm
+  const auto resolution = env->CallFloatMethod(range, get_resolution_method);
+  const auto size       = env->CallFloatMethod(range, get_range_method);
+  if (env->ExceptionCheck()) {
+    env->ExceptionClear();
+    return 0.F;
+  }
+  if (resolution > 0.F) {
+    return resolution * kTapSlopMm;
+  }
+  LOG_WARN("touchpad: resolution of axis {} is unknown", axis);
+  return size * kFallbackTapSlopRangeRatio;
+}
+
+void update_tap_slop(android_app* app, int32_t device_id) {
+  if (tap_slop.device_id == device_id) {
+    return;
+  }
+  tap_slop = {.device_id = device_id};
+
+  JNIEnv* env = nullptr;
+  if (app->activity->vm->GetEnv(
+        reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK ||
+      !env) {
+    LOG_ERROR("update_tap_slop: current thread is not attached");
+    return;
+  }
+  // local references are released by PopLocalFrame()
+  if (env->PushLocalFrame(8) != JNI_OK) {
+    LOG_ERROR("update_tap_slop: PushLocalFrame failed");
+    env->ExceptionClear();
+    return;
+  }
+  jclass    device_class      = env->FindClass("android/view/InputDevice");
+  jmethodID get_device_method = env->GetStaticMethodID(
+    device_class, "getDevice", "(I)Landroid/view/InputDevice;");
+  jobject device =
+    env->CallStaticObjectMethod(device_class, get_device_method, device_id);
+  if (env->ExceptionCheck() || !device) {
+    env->ExceptionClear();
+  } else {
+    tap_slop.x = query_tap_slop(env, device, AMOTION_EVENT_AXIS_X);
+    tap_slop.y = query_tap_slop(env, device, AMOTION_EVENT_AXIS_Y);
+  }
+  env->PopLocalFrame(nullptr);
+  LOG_INFO(
+    "touchpad {}: tap slop is ({}, {})", device_id, tap_slop.x, tap_slop.y);
+}
+
+bool exceeds_tap_slop() {
+  const auto dx = touch_frame.last_x - touch_frame.start_x;
+  const auto dy = touch_frame.last_y - touch_frame.start_y;
+  if (tap_slop.x <= 0.F || tap_slop.y <= 0.F) {
+    // the slop is unavailable; regard any movement as exceeding it
+    return dx != 0.F || dy != 0.F;
+  }
+  const auto rx = dx / tap_slop.x;
+  const auto ry = dy / tap_slop.y;
+  return (rx * rx) + (ry * ry) > 1.F;
+}
 }  // namespace
 
-void handle_touchpad_input(AInputEvent* event) {
+void handle_touchpad_input(android_app* app, AInputEvent* event) {
   const auto action = AMotionEvent_getAction(event);
   const auto index =
     static_cast<size_t>((action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >>
@@ -44,7 +140,10 @@ void handle_touchpad_input(AInputEvent* event) {
     static_cast<int32_t>(AMotionEvent_getPointerCount(event));
   switch (action & AMOTION_EVENT_ACTION_MASK) {
     case AMOTION_EVENT_ACTION_DOWN:
+      update_tap_slop(app, AInputEvent_getDeviceId(event));
       set_primary_pointer(event, 0);
+      touch_frame.start_x       = touch_frame.last_x;
+      touch_frame.start_y       = touch_frame.last_y;
       touch_frame.pointer_count = pointer_count;
       touch_frame.began         = true;
       return;
@@ -152,7 +251,7 @@ TouchPhase take_touch_phase() {
 void update_gesture(android_app* app, float delta_sec) {
   constexpr float kTapMovementDeltaMultiplier = 0.4F;
   constexpr float kTapScrollDeltaMultiplier   = 0.006F;
-  constexpr float kTapThresholdSec            = 0.2F;
+  constexpr float kTapThresholdSec            = 0.3F;
 
   const auto phase         = take_touch_phase();
   const auto pointer_count = touch_frame.pointer_count;
@@ -174,40 +273,34 @@ void update_gesture(android_app* app, float delta_sec) {
       break;
 
     case TapState::PENDING:
-      if (pointer_count >= 2) {
-        tap_state = TapState::SCROLL;
-        break;
-      }
-      switch (phase) {
-        case TouchPhase::MOVED:
-          tap_state = TapState::MOVE_ONLY;
-          break;
-        case TouchPhase::STATIONARY:
-          passed_sec_from_began += delta_sec;
-          if (passed_sec_from_began > kTapThresholdSec) {
-            tap_state = TapState::LONG_TAP;
-            perform_haptic_feedback(app);
-          }
-          break;
-        case TouchPhase::ENDED:
-          // tap duration is less than kTapThresholdSec
+      if (phase == TouchPhase::ENDED) {
+        // tap duration is less than kTapThresholdSec
+        if (!exceeds_tap_slop()) {
           click(BTN_LEFT, passed_sec_from_began);
-          tap_state = TapState::IDLE;
-          break;
-        default:
-          break;
+        }
+        tap_state = TapState::IDLE;
+      } else if (pointer_count >= 2) {
+        tap_state = TapState::SCROLL;
+      } else if (exceeds_tap_slop()) {
+        tap_state = TapState::MOVE_ONLY;
+      } else if (phase != TouchPhase::BEGAN) {
+        passed_sec_from_began += delta_sec;
+        if (passed_sec_from_began > kTapThresholdSec) {
+          tap_state = TapState::LONG_TAP;
+          perform_haptic_feedback(app);
+        }
       }
       break;
 
     case TapState::LONG_TAP:
-      if (phase == TouchPhase::MOVED) {
-        yabe_compositor_button(BTN_LEFT, true);
-        tap_state = TapState::DRAG;
-      } else if (phase == TouchPhase::ENDED) {
+      if (phase == TouchPhase::ENDED) {
         click(BTN_RIGHT, 0.2F);
         tap_state = TapState::IDLE;
       } else if (pointer_count >= 2) {
         tap_state = TapState::SCROLL;
+      } else if (exceeds_tap_slop()) {
+        yabe_compositor_button(BTN_LEFT, true);
+        tap_state = TapState::DRAG;
       }
       break;
 

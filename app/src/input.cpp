@@ -75,7 +75,7 @@ int32_t handle_keyboard_input(AInputEvent* event) {
   return 1;
 }
 
-int32_t handle_input_event(android_app* /*app*/, AInputEvent* event) {
+int32_t handle_input_event(android_app* app, AInputEvent* event) {
   if (!compositor_ready_ || !compositor_ready_->load()) {
     return 0;
   }
@@ -84,7 +84,7 @@ int32_t handle_input_event(android_app* /*app*/, AInputEvent* event) {
     // otherwise its input arrives as a mouse
     if ((AInputEvent_getSource(event) & AINPUT_SOURCE_TOUCHPAD) ==
         AINPUT_SOURCE_TOUCHPAD) {
-      handle_touchpad_input(event);
+      handle_touchpad_input(app, event);
     } else {
       handle_mouse_input(event);
     }
