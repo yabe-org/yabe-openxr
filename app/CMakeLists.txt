@@ -55,6 +55,23 @@ set_target_properties(xkbcommon PROPERTIES
 )
 add_dependencies(xkbcommon xkbcommon_project)
 
+set(COMPOSITOR_SUBMODULE_DIR ${CMAKE_CURRENT_LIST_DIR}/../yabe-compositor)
+ExternalProject_Add(
+    yabe_compositor_project
+    SOURCE_DIR ${COMPOSITOR_SUBMODULE_DIR}
+    BUILD_ALWAYS TRUE
+    CONFIGURE_COMMAND meson setup <BINARY_DIR> <SOURCE_DIR> --cross-file ${CMAKE_CURRENT_BINARY_DIR}/meson_cross.txt
+    BUILD_COMMAND meson compile -C <BINARY_DIR>
+    INSTALL_COMMAND ""
+    BUILD_BYPRODUCTS <BINARY_DIR>/libyabe_compositor.a
+)
+ExternalProject_Get_Property(yabe_compositor_project BINARY_DIR)
+set(MESON_BUILD_DIR ${BINARY_DIR})
+add_library(yabe_compositor STATIC IMPORTED)
+set_target_properties(yabe_compositor PROPERTIES
+    IMPORTED_LOCATION ${MESON_BUILD_DIR}/libyabe_compositor.a
+)
+
 add_library(native_app_glue STATIC ${ANDROID_NDK}/sources/android/native_app_glue/android_native_app_glue.c)
 target_include_directories(native_app_glue PUBLIC ${ANDROID_NDK}/sources/android/native_app_glue)
 
@@ -73,18 +90,17 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
   GLM_ENABLE_EXPERIMENTAL
 )
 
-add_library(yabe-compositor STATIC IMPORTED)
-set_target_properties(yabe-compositor PROPERTIES
-  IMPORTED_LOCATION ${CMAKE_CURRENT_LIST_DIR}/../../../yabe/compositor/android-build/libyabe_compositor.a)
-
 target_include_directories(${PROJECT_NAME}
   PRIVATE src
   SYSTEM PRIVATE
   ${ANDROID_NDK}/sources/android/native_app_glue
-  ${CMAKE_CURRENT_LIST_DIR}/../../../yabe/compositor
+  ${COMPOSITOR_SUBMODULE_DIR}
 )
 
-add_dependencies(${PROJECT_NAME} xkbcommon_project)
+add_dependencies(${PROJECT_NAME}
+  xkbcommon_project
+  yabe_compositor_project
+)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
   OpenXR::openxr_loader
@@ -95,7 +111,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
   native_app_glue
   log
   andlify_core
-  yabe-compositor
+  yabe_compositor
   xkbcommon
 )
 
